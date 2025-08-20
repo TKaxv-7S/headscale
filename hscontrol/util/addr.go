@@ -2,8 +2,8 @@ package util
 
 import (
 	"fmt"
+	"iter"
 	"net/netip"
-	"reflect"
 	"strings"
 
 	"go4.org/netipx"
@@ -104,7 +104,7 @@ func StringToIPPrefix(prefixes []string) ([]netip.Prefix, error) {
 	for index, prefixStr := range prefixes {
 		prefix, err := netip.ParsePrefix(prefixStr)
 		if err != nil {
-			return []netip.Prefix{}, err
+			return nil, err
 		}
 
 		result[index] = prefix
@@ -113,12 +113,15 @@ func StringToIPPrefix(prefixes []string) ([]netip.Prefix, error) {
 	return result, nil
 }
 
-func StringOrPrefixListContains[T string | netip.Prefix](ts []T, t T) bool {
-	for _, v := range ts {
-		if reflect.DeepEqual(v, t) {
-			return true
+// IPSetAddrIter returns a function that iterates over all the IPs in the IPSet.
+func IPSetAddrIter(ipSet *netipx.IPSet) iter.Seq[netip.Addr] {
+	return func(yield func(netip.Addr) bool) {
+		for _, rng := range ipSet.Ranges() {
+			for ip := rng.From(); ip.Compare(rng.To()) <= 0; ip = ip.Next() {
+				if !yield(ip) {
+					return
+				}
+			}
 		}
 	}
-
-	return false
 }

@@ -37,11 +37,6 @@ var (
 		Name:      "mapresponse_updates_received_total",
 		Help:      "total count of mapresponse updates received on update channel",
 	}, []string{"type"})
-	mapResponseWriteUpdatesInStream = promauto.NewCounterVec(prometheus.CounterOpts{
-		Namespace: prometheusNamespace,
-		Name:      "mapresponse_write_updates_in_stream_total",
-		Help:      "total count of writes that occurred in a stream session, pre-68 nodes",
-	}, []string{"status"})
 	mapResponseEndpointUpdates = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: prometheusNamespace,
 		Name:      "mapresponse_endpoint_updates_total",
@@ -83,7 +78,7 @@ func prometheusMiddleware(next http.Handler) http.Handler {
 
 		// Ignore streaming and noise sessions
 		// it has its own router further down.
-		if path == "/ts2021" || path == "/machine/map" || path == "/derp" || path == "/derp/probe" || path == "/bootstrap-dns" {
+		if path == "/ts2021" || path == "/machine/map" || path == "/derp" || path == "/derp/probe" || path == "/derp/latency-check" || path == "/bootstrap-dns" {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -116,5 +111,6 @@ func (r *respWriterProm) Write(b []byte) (int, error) {
 	}
 	n, err := r.ResponseWriter.Write(b)
 	r.written += int64(n)
+
 	return n, err
 }

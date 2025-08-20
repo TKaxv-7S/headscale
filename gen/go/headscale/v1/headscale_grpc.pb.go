@@ -19,37 +19,30 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	HeadscaleService_GetUser_FullMethodName                 = "/headscale.v1.HeadscaleService/GetUser"
-	HeadscaleService_CreateUser_FullMethodName              = "/headscale.v1.HeadscaleService/CreateUser"
-	HeadscaleService_RenameUser_FullMethodName              = "/headscale.v1.HeadscaleService/RenameUser"
-	HeadscaleService_DeleteUser_FullMethodName              = "/headscale.v1.HeadscaleService/DeleteUser"
-	HeadscaleService_ListUsers_FullMethodName               = "/headscale.v1.HeadscaleService/ListUsers"
-	HeadscaleService_CreatePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
-	HeadscaleService_ExpirePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
-	HeadscaleService_ListPreAuthKeys_FullMethodName         = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
-	HeadscaleService_DebugCreateNode_FullMethodName         = "/headscale.v1.HeadscaleService/DebugCreateNode"
-	HeadscaleService_GetNode_FullMethodName                 = "/headscale.v1.HeadscaleService/GetNode"
-	HeadscaleService_SetTags_FullMethodName                 = "/headscale.v1.HeadscaleService/SetTags"
-	HeadscaleService_RegisterNode_FullMethodName            = "/headscale.v1.HeadscaleService/RegisterNode"
-	HeadscaleService_DeleteNode_FullMethodName              = "/headscale.v1.HeadscaleService/DeleteNode"
-	HeadscaleService_ExpireNode_FullMethodName              = "/headscale.v1.HeadscaleService/ExpireNode"
-	HeadscaleService_RenameNode_FullMethodName              = "/headscale.v1.HeadscaleService/RenameNode"
-	HeadscaleService_ChangeIPv4AddressesNode_FullMethodName = "/headscale.v1.HeadscaleService/ChangeIPv4AddressesNode"
-	HeadscaleService_ChangeIPv6AddressesNode_FullMethodName = "/headscale.v1.HeadscaleService/ChangeIPv6AddressesNode"
-	HeadscaleService_ListNodes_FullMethodName               = "/headscale.v1.HeadscaleService/ListNodes"
-	HeadscaleService_MoveNode_FullMethodName                = "/headscale.v1.HeadscaleService/MoveNode"
-	HeadscaleService_BackfillNodeIPs_FullMethodName         = "/headscale.v1.HeadscaleService/BackfillNodeIPs"
-	HeadscaleService_GetRoutes_FullMethodName               = "/headscale.v1.HeadscaleService/GetRoutes"
-	HeadscaleService_EnableRoute_FullMethodName             = "/headscale.v1.HeadscaleService/EnableRoute"
-	HeadscaleService_DisableRoute_FullMethodName            = "/headscale.v1.HeadscaleService/DisableRoute"
-	HeadscaleService_GetNodeRoutes_FullMethodName           = "/headscale.v1.HeadscaleService/GetNodeRoutes"
-	HeadscaleService_DeleteRoute_FullMethodName             = "/headscale.v1.HeadscaleService/DeleteRoute"
-	HeadscaleService_CreateApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/CreateApiKey"
-	HeadscaleService_ExpireApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/ExpireApiKey"
-	HeadscaleService_ListApiKeys_FullMethodName             = "/headscale.v1.HeadscaleService/ListApiKeys"
-	HeadscaleService_DeleteApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/DeleteApiKey"
-	HeadscaleService_GetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/GetPolicy"
-	HeadscaleService_SetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/SetPolicy"
+	HeadscaleService_CreateUser_FullMethodName        = "/headscale.v1.HeadscaleService/CreateUser"
+	HeadscaleService_RenameUser_FullMethodName        = "/headscale.v1.HeadscaleService/RenameUser"
+	HeadscaleService_DeleteUser_FullMethodName        = "/headscale.v1.HeadscaleService/DeleteUser"
+	HeadscaleService_ListUsers_FullMethodName         = "/headscale.v1.HeadscaleService/ListUsers"
+	HeadscaleService_CreatePreAuthKey_FullMethodName  = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
+	HeadscaleService_ExpirePreAuthKey_FullMethodName  = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
+	HeadscaleService_ListPreAuthKeys_FullMethodName   = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
+	HeadscaleService_DebugCreateNode_FullMethodName   = "/headscale.v1.HeadscaleService/DebugCreateNode"
+	HeadscaleService_GetNode_FullMethodName           = "/headscale.v1.HeadscaleService/GetNode"
+	HeadscaleService_SetTags_FullMethodName           = "/headscale.v1.HeadscaleService/SetTags"
+	HeadscaleService_SetApprovedRoutes_FullMethodName = "/headscale.v1.HeadscaleService/SetApprovedRoutes"
+	HeadscaleService_RegisterNode_FullMethodName      = "/headscale.v1.HeadscaleService/RegisterNode"
+	HeadscaleService_DeleteNode_FullMethodName        = "/headscale.v1.HeadscaleService/DeleteNode"
+	HeadscaleService_ExpireNode_FullMethodName        = "/headscale.v1.HeadscaleService/ExpireNode"
+	HeadscaleService_RenameNode_FullMethodName        = "/headscale.v1.HeadscaleService/RenameNode"
+	HeadscaleService_ListNodes_FullMethodName         = "/headscale.v1.HeadscaleService/ListNodes"
+	HeadscaleService_MoveNode_FullMethodName          = "/headscale.v1.HeadscaleService/MoveNode"
+	HeadscaleService_BackfillNodeIPs_FullMethodName   = "/headscale.v1.HeadscaleService/BackfillNodeIPs"
+	HeadscaleService_CreateApiKey_FullMethodName      = "/headscale.v1.HeadscaleService/CreateApiKey"
+	HeadscaleService_ExpireApiKey_FullMethodName      = "/headscale.v1.HeadscaleService/ExpireApiKey"
+	HeadscaleService_ListApiKeys_FullMethodName       = "/headscale.v1.HeadscaleService/ListApiKeys"
+	HeadscaleService_DeleteApiKey_FullMethodName      = "/headscale.v1.HeadscaleService/DeleteApiKey"
+	HeadscaleService_GetPolicy_FullMethodName         = "/headscale.v1.HeadscaleService/GetPolicy"
+	HeadscaleService_SetPolicy_FullMethodName         = "/headscale.v1.HeadscaleService/SetPolicy"
 )
 
 // HeadscaleServiceClient is the client API for HeadscaleService service.
@@ -57,7 +50,6 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type HeadscaleServiceClient interface {
 	// --- User start ---
-	GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*GetUserResponse, error)
 	CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*CreateUserResponse, error)
 	RenameUser(ctx context.Context, in *RenameUserRequest, opts ...grpc.CallOption) (*RenameUserResponse, error)
 	DeleteUser(ctx context.Context, in *DeleteUserRequest, opts ...grpc.CallOption) (*DeleteUserResponse, error)
@@ -70,21 +62,14 @@ type HeadscaleServiceClient interface {
 	DebugCreateNode(ctx context.Context, in *DebugCreateNodeRequest, opts ...grpc.CallOption) (*DebugCreateNodeResponse, error)
 	GetNode(ctx context.Context, in *GetNodeRequest, opts ...grpc.CallOption) (*GetNodeResponse, error)
 	SetTags(ctx context.Context, in *SetTagsRequest, opts ...grpc.CallOption) (*SetTagsResponse, error)
+	SetApprovedRoutes(ctx context.Context, in *SetApprovedRoutesRequest, opts ...grpc.CallOption) (*SetApprovedRoutesResponse, error)
 	RegisterNode(ctx context.Context, in *RegisterNodeRequest, opts ...grpc.CallOption) (*RegisterNodeResponse, error)
 	DeleteNode(ctx context.Context, in *DeleteNodeRequest, opts ...grpc.CallOption) (*DeleteNodeResponse, error)
 	ExpireNode(ctx context.Context, in *ExpireNodeRequest, opts ...grpc.CallOption) (*ExpireNodeResponse, error)
 	RenameNode(ctx context.Context, in *RenameNodeRequest, opts ...grpc.CallOption) (*RenameNodeResponse, error)
-	ChangeIPv4AddressesNode(ctx context.Context, in *ChangeIPAddressesNodeRequest, opts ...grpc.CallOption) (*ChangeIPAddressesNodeResponse, error)
-	ChangeIPv6AddressesNode(ctx context.Context, in *ChangeIPAddressesNodeRequest, opts ...grpc.CallOption) (*ChangeIPAddressesNodeResponse, error)
 	ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error)
 	MoveNode(ctx context.Context, in *MoveNodeRequest, opts ...grpc.CallOption) (*MoveNodeResponse, error)
 	BackfillNodeIPs(ctx context.Context, in *BackfillNodeIPsRequest, opts ...grpc.CallOption) (*BackfillNodeIPsResponse, error)
-	// --- Route start ---
-	GetRoutes(ctx context.Context, in *GetRoutesRequest, opts ...grpc.CallOption) (*GetRoutesResponse, error)
-	EnableRoute(ctx context.Context, in *EnableRouteRequest, opts ...grpc.CallOption) (*EnableRouteResponse, error)
-	DisableRoute(ctx context.Context, in *DisableRouteRequest, opts ...grpc.CallOption) (*DisableRouteResponse, error)
-	GetNodeRoutes(ctx context.Context, in *GetNodeRoutesRequest, opts ...grpc.CallOption) (*GetNodeRoutesResponse, error)
-	DeleteRoute(ctx context.Context, in *DeleteRouteRequest, opts ...grpc.CallOption) (*DeleteRouteResponse, error)
 	// --- ApiKeys start ---
 	CreateApiKey(ctx context.Context, in *CreateApiKeyRequest, opts ...grpc.CallOption) (*CreateApiKeyResponse, error)
 	ExpireApiKey(ctx context.Context, in *ExpireApiKeyRequest, opts ...grpc.CallOption) (*ExpireApiKeyResponse, error)
@@ -101,16 +86,6 @@ type headscaleServiceClient struct {
 
 func NewHeadscaleServiceClient(cc grpc.ClientConnInterface) HeadscaleServiceClient {
 	return &headscaleServiceClient{cc}
-}
-
-func (c *headscaleServiceClient) GetUser(ctx context.Context, in *GetUserRequest, opts ...grpc.CallOption) (*GetUserResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetUserResponse)
-	err := c.cc.Invoke(ctx, HeadscaleService_GetUser_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 func (c *headscaleServiceClient) CreateUser(ctx context.Context, in *CreateUserRequest, opts ...grpc.CallOption) (*CreateUserResponse, error) {
@@ -213,6 +188,16 @@ func (c *headscaleServiceClient) SetTags(ctx context.Context, in *SetTagsRequest
 	return out, nil
 }
 
+func (c *headscaleServiceClient) SetApprovedRoutes(ctx context.Context, in *SetApprovedRoutesRequest, opts ...grpc.CallOption) (*SetApprovedRoutesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SetApprovedRoutesResponse)
+	err := c.cc.Invoke(ctx, HeadscaleService_SetApprovedRoutes_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *headscaleServiceClient) RegisterNode(ctx context.Context, in *RegisterNodeRequest, opts ...grpc.CallOption) (*RegisterNodeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RegisterNodeResponse)
@@ -253,26 +238,6 @@ func (c *headscaleServiceClient) RenameNode(ctx context.Context, in *RenameNodeR
 	return out, nil
 }
 
-func (c *headscaleServiceClient) ChangeIPv4AddressesNode(ctx context.Context, in *ChangeIPAddressesNodeRequest, opts ...grpc.CallOption) (*ChangeIPAddressesNodeResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ChangeIPAddressesNodeResponse)
-	err := c.cc.Invoke(ctx, HeadscaleService_ChangeIPv4AddressesNode_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *headscaleServiceClient) ChangeIPv6AddressesNode(ctx context.Context, in *ChangeIPAddressesNodeRequest, opts ...grpc.CallOption) (*ChangeIPAddressesNodeResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ChangeIPAddressesNodeResponse)
-	err := c.cc.Invoke(ctx, HeadscaleService_ChangeIPv6AddressesNode_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *headscaleServiceClient) ListNodes(ctx context.Context, in *ListNodesRequest, opts ...grpc.CallOption) (*ListNodesResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ListNodesResponse)
@@ -297,56 +262,6 @@ func (c *headscaleServiceClient) BackfillNodeIPs(ctx context.Context, in *Backfi
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(BackfillNodeIPsResponse)
 	err := c.cc.Invoke(ctx, HeadscaleService_BackfillNodeIPs_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *headscaleServiceClient) GetRoutes(ctx context.Context, in *GetRoutesRequest, opts ...grpc.CallOption) (*GetRoutesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetRoutesResponse)
-	err := c.cc.Invoke(ctx, HeadscaleService_GetRoutes_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *headscaleServiceClient) EnableRoute(ctx context.Context, in *EnableRouteRequest, opts ...grpc.CallOption) (*EnableRouteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(EnableRouteResponse)
-	err := c.cc.Invoke(ctx, HeadscaleService_EnableRoute_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *headscaleServiceClient) DisableRoute(ctx context.Context, in *DisableRouteRequest, opts ...grpc.CallOption) (*DisableRouteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DisableRouteResponse)
-	err := c.cc.Invoke(ctx, HeadscaleService_DisableRoute_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *headscaleServiceClient) GetNodeRoutes(ctx context.Context, in *GetNodeRoutesRequest, opts ...grpc.CallOption) (*GetNodeRoutesResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(GetNodeRoutesResponse)
-	err := c.cc.Invoke(ctx, HeadscaleService_GetNodeRoutes_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *headscaleServiceClient) DeleteRoute(ctx context.Context, in *DeleteRouteRequest, opts ...grpc.CallOption) (*DeleteRouteResponse, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(DeleteRouteResponse)
-	err := c.cc.Invoke(ctx, HeadscaleService_DeleteRoute_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -418,7 +333,6 @@ func (c *headscaleServiceClient) SetPolicy(ctx context.Context, in *SetPolicyReq
 // for forward compatibility.
 type HeadscaleServiceServer interface {
 	// --- User start ---
-	GetUser(context.Context, *GetUserRequest) (*GetUserResponse, error)
 	CreateUser(context.Context, *CreateUserRequest) (*CreateUserResponse, error)
 	RenameUser(context.Context, *RenameUserRequest) (*RenameUserResponse, error)
 	DeleteUser(context.Context, *DeleteUserRequest) (*DeleteUserResponse, error)
@@ -431,21 +345,14 @@ type HeadscaleServiceServer interface {
 	DebugCreateNode(context.Context, *DebugCreateNodeRequest) (*DebugCreateNodeResponse, error)
 	GetNode(context.Context, *GetNodeRequest) (*GetNodeResponse, error)
 	SetTags(context.Context, *SetTagsRequest) (*SetTagsResponse, error)
+	SetApprovedRoutes(context.Context, *SetApprovedRoutesRequest) (*SetApprovedRoutesResponse, error)
 	RegisterNode(context.Context, *RegisterNodeRequest) (*RegisterNodeResponse, error)
 	DeleteNode(context.Context, *DeleteNodeRequest) (*DeleteNodeResponse, error)
 	ExpireNode(context.Context, *ExpireNodeRequest) (*ExpireNodeResponse, error)
 	RenameNode(context.Context, *RenameNodeRequest) (*RenameNodeResponse, error)
-	ChangeIPv4AddressesNode(context.Context, *ChangeIPAddressesNodeRequest) (*ChangeIPAddressesNodeResponse, error)
-	ChangeIPv6AddressesNode(context.Context, *ChangeIPAddressesNodeRequest) (*ChangeIPAddressesNodeResponse, error)
 	ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error)
 	MoveNode(context.Context, *MoveNodeRequest) (*MoveNodeResponse, error)
 	BackfillNodeIPs(context.Context, *BackfillNodeIPsRequest) (*BackfillNodeIPsResponse, error)
-	// --- Route start ---
-	GetRoutes(context.Context, *GetRoutesRequest) (*GetRoutesResponse, error)
-	EnableRoute(context.Context, *EnableRouteRequest) (*EnableRouteResponse, error)
-	DisableRoute(context.Context, *DisableRouteRequest) (*DisableRouteResponse, error)
-	GetNodeRoutes(context.Context, *GetNodeRoutesRequest) (*GetNodeRoutesResponse, error)
-	DeleteRoute(context.Context, *DeleteRouteRequest) (*DeleteRouteResponse, error)
 	// --- ApiKeys start ---
 	CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error)
 	ExpireApiKey(context.Context, *ExpireApiKeyRequest) (*ExpireApiKeyResponse, error)
@@ -464,9 +371,6 @@ type HeadscaleServiceServer interface {
 // pointer dereference when methods are called.
 type UnimplementedHeadscaleServiceServer struct{}
 
-func (UnimplementedHeadscaleServiceServer) GetUser(context.Context, *GetUserRequest) (*GetUserResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetUser not implemented")
-}
 func (UnimplementedHeadscaleServiceServer) CreateUser(context.Context, *CreateUserRequest) (*CreateUserResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateUser not implemented")
 }
@@ -497,6 +401,9 @@ func (UnimplementedHeadscaleServiceServer) GetNode(context.Context, *GetNodeRequ
 func (UnimplementedHeadscaleServiceServer) SetTags(context.Context, *SetTagsRequest) (*SetTagsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetTags not implemented")
 }
+func (UnimplementedHeadscaleServiceServer) SetApprovedRoutes(context.Context, *SetApprovedRoutesRequest) (*SetApprovedRoutesResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetApprovedRoutes not implemented")
+}
 func (UnimplementedHeadscaleServiceServer) RegisterNode(context.Context, *RegisterNodeRequest) (*RegisterNodeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RegisterNode not implemented")
 }
@@ -509,12 +416,6 @@ func (UnimplementedHeadscaleServiceServer) ExpireNode(context.Context, *ExpireNo
 func (UnimplementedHeadscaleServiceServer) RenameNode(context.Context, *RenameNodeRequest) (*RenameNodeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RenameNode not implemented")
 }
-func (UnimplementedHeadscaleServiceServer) ChangeIPv4AddressesNode(context.Context, *ChangeIPAddressesNodeRequest) (*ChangeIPAddressesNodeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ChangeIPv4AddressesNode not implemented")
-}
-func (UnimplementedHeadscaleServiceServer) ChangeIPv6AddressesNode(context.Context, *ChangeIPAddressesNodeRequest) (*ChangeIPAddressesNodeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ChangeIPv6AddressesNode not implemented")
-}
 func (UnimplementedHeadscaleServiceServer) ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListNodes not implemented")
 }
@@ -523,21 +424,6 @@ func (UnimplementedHeadscaleServiceServer) MoveNode(context.Context, *MoveNodeRe
 }
 func (UnimplementedHeadscaleServiceServer) BackfillNodeIPs(context.Context, *BackfillNodeIPsRequest) (*BackfillNodeIPsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BackfillNodeIPs not implemented")
-}
-func (UnimplementedHeadscaleServiceServer) GetRoutes(context.Context, *GetRoutesRequest) (*GetRoutesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetRoutes not implemented")
-}
-func (UnimplementedHeadscaleServiceServer) EnableRoute(context.Context, *EnableRouteRequest) (*EnableRouteResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method EnableRoute not implemented")
-}
-func (UnimplementedHeadscaleServiceServer) DisableRoute(context.Context, *DisableRouteRequest) (*DisableRouteResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DisableRoute not implemented")
-}
-func (UnimplementedHeadscaleServiceServer) GetNodeRoutes(context.Context, *GetNodeRoutesRequest) (*GetNodeRoutesResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method GetNodeRoutes not implemented")
-}
-func (UnimplementedHeadscaleServiceServer) DeleteRoute(context.Context, *DeleteRouteRequest) (*DeleteRouteResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method DeleteRoute not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) CreateApiKey(context.Context, *CreateApiKeyRequest) (*CreateApiKeyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CreateApiKey not implemented")
@@ -576,24 +462,6 @@ func RegisterHeadscaleServiceServer(s grpc.ServiceRegistrar, srv HeadscaleServic
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&HeadscaleService_ServiceDesc, srv)
-}
-
-func _HeadscaleService_GetUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetUserRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HeadscaleServiceServer).GetUser(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HeadscaleService_GetUser_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeadscaleServiceServer).GetUser(ctx, req.(*GetUserRequest))
-	}
-	return interceptor(ctx, in, info, handler)
 }
 
 func _HeadscaleService_CreateUser_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -776,6 +644,24 @@ func _HeadscaleService_SetTags_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _HeadscaleService_SetApprovedRoutes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SetApprovedRoutesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HeadscaleServiceServer).SetApprovedRoutes(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: HeadscaleService_SetApprovedRoutes_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HeadscaleServiceServer).SetApprovedRoutes(ctx, req.(*SetApprovedRoutesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _HeadscaleService_RegisterNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RegisterNodeRequest)
 	if err := dec(in); err != nil {
@@ -848,42 +734,6 @@ func _HeadscaleService_RenameNode_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _HeadscaleService_ChangeIPv4AddressesNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ChangeIPAddressesNodeRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HeadscaleServiceServer).ChangeIPv4AddressesNode(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HeadscaleService_ChangeIPv4AddressesNode_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeadscaleServiceServer).ChangeIPv4AddressesNode(ctx, req.(*ChangeIPAddressesNodeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HeadscaleService_ChangeIPv6AddressesNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ChangeIPAddressesNodeRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HeadscaleServiceServer).ChangeIPv6AddressesNode(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HeadscaleService_ChangeIPv6AddressesNode_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeadscaleServiceServer).ChangeIPv6AddressesNode(ctx, req.(*ChangeIPAddressesNodeRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _HeadscaleService_ListNodes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(ListNodesRequest)
 	if err := dec(in); err != nil {
@@ -934,96 +784,6 @@ func _HeadscaleService_BackfillNodeIPs_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(HeadscaleServiceServer).BackfillNodeIPs(ctx, req.(*BackfillNodeIPsRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HeadscaleService_GetRoutes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetRoutesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HeadscaleServiceServer).GetRoutes(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HeadscaleService_GetRoutes_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeadscaleServiceServer).GetRoutes(ctx, req.(*GetRoutesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HeadscaleService_EnableRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(EnableRouteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HeadscaleServiceServer).EnableRoute(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HeadscaleService_EnableRoute_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeadscaleServiceServer).EnableRoute(ctx, req.(*EnableRouteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HeadscaleService_DisableRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DisableRouteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HeadscaleServiceServer).DisableRoute(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HeadscaleService_DisableRoute_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeadscaleServiceServer).DisableRoute(ctx, req.(*DisableRouteRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HeadscaleService_GetNodeRoutes_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(GetNodeRoutesRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HeadscaleServiceServer).GetNodeRoutes(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HeadscaleService_GetNodeRoutes_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeadscaleServiceServer).GetNodeRoutes(ctx, req.(*GetNodeRoutesRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _HeadscaleService_DeleteRoute_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(DeleteRouteRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(HeadscaleServiceServer).DeleteRoute(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: HeadscaleService_DeleteRoute_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(HeadscaleServiceServer).DeleteRoute(ctx, req.(*DeleteRouteRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1144,10 +904,6 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 	HandlerType: (*HeadscaleServiceServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "GetUser",
-			Handler:    _HeadscaleService_GetUser_Handler,
-		},
-		{
 			MethodName: "CreateUser",
 			Handler:    _HeadscaleService_CreateUser_Handler,
 		},
@@ -1188,6 +944,10 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HeadscaleService_SetTags_Handler,
 		},
 		{
+			MethodName: "SetApprovedRoutes",
+			Handler:    _HeadscaleService_SetApprovedRoutes_Handler,
+		},
+		{
 			MethodName: "RegisterNode",
 			Handler:    _HeadscaleService_RegisterNode_Handler,
 		},
@@ -1204,14 +964,6 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _HeadscaleService_RenameNode_Handler,
 		},
 		{
-			MethodName: "ChangeIPv4AddressesNode",
-			Handler:    _HeadscaleService_ChangeIPv4AddressesNode_Handler,
-		},
-		{
-			MethodName: "ChangeIPv6AddressesNode",
-			Handler:    _HeadscaleService_ChangeIPv6AddressesNode_Handler,
-		},
-		{
 			MethodName: "ListNodes",
 			Handler:    _HeadscaleService_ListNodes_Handler,
 		},
@@ -1222,26 +974,6 @@ var HeadscaleService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "BackfillNodeIPs",
 			Handler:    _HeadscaleService_BackfillNodeIPs_Handler,
-		},
-		{
-			MethodName: "GetRoutes",
-			Handler:    _HeadscaleService_GetRoutes_Handler,
-		},
-		{
-			MethodName: "EnableRoute",
-			Handler:    _HeadscaleService_EnableRoute_Handler,
-		},
-		{
-			MethodName: "DisableRoute",
-			Handler:    _HeadscaleService_DisableRoute_Handler,
-		},
-		{
-			MethodName: "GetNodeRoutes",
-			Handler:    _HeadscaleService_GetNodeRoutes_Handler,
-		},
-		{
-			MethodName: "DeleteRoute",
-			Handler:    _HeadscaleService_DeleteRoute_Handler,
 		},
 		{
 			MethodName: "CreateApiKey",

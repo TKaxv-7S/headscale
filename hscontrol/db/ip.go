@@ -14,7 +14,10 @@ import (
 	"github.com/rs/zerolog/log"
 	"go4.org/netipx"
 	"gorm.io/gorm"
+	"tailscale.com/net/tsaddr"
 )
+
+var errGeneratedIPBytesInvalid = errors.New("generated ip bytes are invalid ip")
 
 // IPAllocator is a singleton responsible for allocating
 // IP addresses for nodes and making sure the same
@@ -190,8 +193,9 @@ func (i *IPAllocator) next(prev netip.Addr, prefix *netip.Prefix) (*netip.Addr, 
 			return nil, ErrCouldNotAllocateIP
 		}
 
-		// Check if the IP has already been allocated.
-		if set.Contains(ip) {
+		// Check if the IP has already been allocated
+		// or if it is a IP reserved by Tailscale.
+		if set.Contains(ip) || isTailscaleReservedIP(ip) {
 			switch i.strategy {
 			case types.IPAllocationStrategySequential:
 				ip = ip.Next()
@@ -234,7 +238,7 @@ func randomNext(pfx netip.Prefix) (netip.Addr, error) {
 
 	ip, ok := netip.AddrFromSlice(valInRange.Bytes())
 	if !ok {
-		return netip.Addr{}, fmt.Errorf("generated ip bytes are invalid ip")
+		return netip.Addr{}, errGeneratedIPBytesInvalid
 	}
 
 	if !pfx.Contains(ip) {
@@ -246,6 +250,12 @@ func randomNext(pfx netip.Prefix) (netip.Addr, error) {
 	}
 
 	return ip, nil
+}
+
+func isTailscaleReservedIP(ip netip.Addr) bool {
+	return tsaddr.ChromeOSVMRange().Contains(ip) ||
+		tsaddr.TailscaleServiceIP() == ip ||
+		tsaddr.TailscaleServiceIPv6() == ip
 }
 
 func (i *IPAllocator) IsAvailableIP(ip netip.Addr) (bool, error) {

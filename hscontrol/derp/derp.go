@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -72,9 +73,7 @@ func mergeDERPMaps(derpMaps []*tailcfg.DERPMap) *tailcfg.DERPMap {
 	}
 
 	for _, derpMap := range derpMaps {
-		for id, region := range derpMap.Regions {
-			result.Regions[id] = region
-		}
+		maps.Copy(result.Regions, derpMap.Regions)
 	}
 
 	return &result
@@ -82,6 +81,9 @@ func mergeDERPMaps(derpMaps []*tailcfg.DERPMap) *tailcfg.DERPMap {
 
 func GetDERPMap(cfg types.DERPConfig) *tailcfg.DERPMap {
 	var derpMaps []*tailcfg.DERPMap
+	if cfg.DERPMap != nil {
+		derpMaps = append(derpMaps, cfg.DERPMap)
+	}
 
 	for _, path := range cfg.Paths {
 		log.Debug().

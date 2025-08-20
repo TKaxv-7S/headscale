@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGenerateRandomStringDNSSafe(t *testing.T) {
-	for i := 0; i < 100000; i++ {
+	for range 100000 {
 		str, err := GenerateRandomStringDNSSafe(8)
-		assert.Nil(t, err)
+		require.NoError(t, err)
 		assert.Len(t, str, 8)
 	}
 }

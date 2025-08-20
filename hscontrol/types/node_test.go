@@ -1,12 +1,15 @@
 package types
 
 import (
+	"fmt"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
+	"github.com/juanfont/headscale/hscontrol/policy/matcher"
 	"github.com/juanfont/headscale/hscontrol/util"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -114,7 +117,8 @@ func Test_NodeCanAccess(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := tt.node1.CanAccess(tt.rules, &tt.node2)
+			matchers := matcher.MatchesFromFilterRules(tt.rules)
+			got := tt.node1.CanAccess(matchers, &tt.node2)
 
 			if got != tt.want {
 				t.Errorf("canAccess() failed: want (%t), got (%t)", tt.want, got)
@@ -127,76 +131,10 @@ func TestNodeFQDN(t *testing.T) {
 	tests := []struct {
 		name    string
 		node    Node
-		cfg     Config
 		domain  string
 		want    string
 		wantErr string
 	}{
-		{
-			name: "all-set-with-username",
-			node: Node{
-				GivenName: "test",
-				User: User{
-					Name: "user",
-				},
-			},
-			cfg: Config{
-				DNSConfig: &tailcfg.DNSConfig{
-					Proxied: true,
-				},
-				DNSUserNameInMagicDNS: true,
-			},
-			domain: "example.com",
-			want:   "test.user.example.com",
-		},
-		{
-			name: "no-given-name-with-username",
-			node: Node{
-				User: User{
-					Name: "user",
-				},
-			},
-			cfg: Config{
-				DNSConfig: &tailcfg.DNSConfig{
-					Proxied: true,
-				},
-				DNSUserNameInMagicDNS: true,
-			},
-			domain:  "example.com",
-			wantErr: "failed to create valid FQDN: node has no given name",
-		},
-		{
-			name: "no-user-name-with-username",
-			node: Node{
-				GivenName: "test",
-				User:      User{},
-			},
-			cfg: Config{
-				DNSConfig: &tailcfg.DNSConfig{
-					Proxied: true,
-				},
-				DNSUserNameInMagicDNS: true,
-			},
-			domain:  "example.com",
-			wantErr: "failed to create valid FQDN: node user has no name",
-		},
-		{
-			name: "no-magic-dns-with-username",
-			node: Node{
-				GivenName: "test",
-				User: User{
-					Name: "user",
-				},
-			},
-			cfg: Config{
-				DNSConfig: &tailcfg.DNSConfig{
-					Proxied: false,
-				},
-				DNSUserNameInMagicDNS: true,
-			},
-			domain: "example.com",
-			want:   "test.user.example.com",
-		},
 		{
 			name: "no-dnsconfig-with-username",
 			node: Node{
@@ -206,7 +144,7 @@ func TestNodeFQDN(t *testing.T) {
 				},
 			},
 			domain: "example.com",
-			want:   "test.example.com",
+			want:   "test.example.com.",
 		},
 		{
 			name: "all-set",
@@ -216,14 +154,8 @@ func TestNodeFQDN(t *testing.T) {
 					Name: "user",
 				},
 			},
-			cfg: Config{
-				DNSConfig: &tailcfg.DNSConfig{
-					Proxied: true,
-				},
-				DNSUserNameInMagicDNS: false,
-			},
 			domain: "example.com",
-			want:   "test.example.com",
+			want:   "test.example.com.",
 		},
 		{
 			name: "no-given-name",
@@ -232,46 +164,16 @@ func TestNodeFQDN(t *testing.T) {
 					Name: "user",
 				},
 			},
-			cfg: Config{
-				DNSConfig: &tailcfg.DNSConfig{
-					Proxied: true,
-				},
-				DNSUserNameInMagicDNS: false,
-			},
 			domain:  "example.com",
 			wantErr: "failed to create valid FQDN: node has no given name",
 		},
 		{
-			name: "no-user-name",
+			name: "too-long-username",
 			node: Node{
-				GivenName: "test",
-				User:      User{},
+				GivenName: strings.Repeat("a", 256),
 			},
-			cfg: Config{
-				DNSConfig: &tailcfg.DNSConfig{
-					Proxied: true,
-				},
-				DNSUserNameInMagicDNS: false,
-			},
-			domain: "example.com",
-			want:   "test.example.com",
-		},
-		{
-			name: "no-magic-dns",
-			node: Node{
-				GivenName: "test",
-				User: User{
-					Name: "user",
-				},
-			},
-			cfg: Config{
-				DNSConfig: &tailcfg.DNSConfig{
-					Proxied: false,
-				},
-				DNSUserNameInMagicDNS: false,
-			},
-			domain: "example.com",
-			want:   "test.example.com",
+			domain:  "example.com",
+			wantErr: fmt.Sprintf("failed to create valid FQDN (%s.example.com.): hostname too long, cannot except 255 ASCII chars", strings.Repeat("a", 256)),
 		},
 		{
 			name: "no-dnsconfig",
@@ -282,13 +184,15 @@ func TestNodeFQDN(t *testing.T) {
 				},
 			},
 			domain: "example.com",
-			want:   "test.example.com",
+			want:   "test.example.com.",
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := tc.node.GetFQDN(&tc.cfg, tc.domain)
+			got, err := tc.node.GetFQDN(tc.domain)
+
+			t.Logf("GOT: %q, %q", got, tc.domain)
 
 			if (err != nil) && (err.Error() != tc.wantErr) {
 				t.Errorf("GetFQDN() error = %s, wantErr %s", err, tc.wantErr)
@@ -429,6 +333,66 @@ func TestPeerChangeFromMapRequest(t *testing.T) {
 			got := tc.node.PeerChangeFromMapRequest(tc.mapReq)
 
 			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(tailcfg.PeerChange{}, "LastSeen")); diff != "" {
+				t.Errorf("Patch unexpected result (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
+func TestApplyHostnameFromHostInfo(t *testing.T) {
+	tests := []struct {
+		name       string
+		nodeBefore Node
+		change     *tailcfg.Hostinfo
+		want       Node
+	}{
+		{
+			name: "hostinfo-not-exists",
+			nodeBefore: Node{
+				GivenName: "manual-test.local",
+				Hostname:  "TestHost.Local",
+			},
+			change: nil,
+			want: Node{
+				GivenName: "manual-test.local",
+				Hostname:  "TestHost.Local",
+			},
+		},
+		{
+			name: "hostinfo-exists-no-automatic-givenName",
+			nodeBefore: Node{
+				GivenName: "manual-test.local",
+				Hostname:  "TestHost.Local",
+			},
+			change: &tailcfg.Hostinfo{
+				Hostname: "NewHostName.Local",
+			},
+			want: Node{
+				GivenName: "manual-test.local",
+				Hostname:  "NewHostName.Local",
+			},
+		},
+		{
+			name: "hostinfo-exists-automatic-givenName",
+			nodeBefore: Node{
+				GivenName: "automaticname.test",
+				Hostname:  "AutomaticName.Test",
+			},
+			change: &tailcfg.Hostinfo{
+				Hostname: "NewHostName.Local",
+			},
+			want: Node{
+				GivenName: "newhostname.local",
+				Hostname:  "NewHostName.Local",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tt.nodeBefore.ApplyHostnameFromHostInfo(tt.change)
+
+			if diff := cmp.Diff(tt.want, tt.nodeBefore, util.Comparers...); diff != "" {
 				t.Errorf("Patch unexpected result (-want +got):\n%s", diff)
 			}
 		})

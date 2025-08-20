@@ -1,6 +1,9 @@
 ignored/
 tailscale/
 .vscode/
+.claude/
+
+*.prof
 
 # Binaries for programs and plugins
 *.exe
@@ -20,9 +23,9 @@ vendor/
 
 dist/
 /headscale
-config.json
 config.yaml
 config*.yaml
+!config-example.yaml
 derp.yaml
 *.hujson
 *.key
@@ -46,3 +49,7 @@ integration_test/etc/config.dump.yaml
 /site
 
 __debug_bin
+
+node_modules/
+package-lock.json
+package.json

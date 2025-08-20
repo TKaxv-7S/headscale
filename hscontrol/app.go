@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	_ "net/http/pprof" // nolint
@@ -18,30 +17,28 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/gorilla/mux"
-	grpcMiddleware "github.com/grpc-ecosystem/go-grpc-middleware"
 	grpcRuntime "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/juanfont/headscale"
 	v1 "github.com/juanfont/headscale/gen/go/headscale/v1"
+	"github.com/juanfont/headscale/hscontrol/capver"
 	"github.com/juanfont/headscale/hscontrol/db"
 	"github.com/juanfont/headscale/hscontrol/derp"
 	derpServer "github.com/juanfont/headscale/hscontrol/derp/server"
+	"github.com/juanfont/headscale/hscontrol/dns"
 	"github.com/juanfont/headscale/hscontrol/mapper"
-	"github.com/juanfont/headscale/hscontrol/notifier"
-	"github.com/juanfont/headscale/hscontrol/policy"
+	"github.com/juanfont/headscale/hscontrol/state"
 	"github.com/juanfont/headscale/hscontrol/types"
+	"github.com/juanfont/headscale/hscontrol/types/change"
 	"github.com/juanfont/headscale/hscontrol/util"
-	"github.com/patrickmn/go-cache"
 	zerolog "github.com/philip-bui/grpc-zerolog"
 	"github.com/pkg/profile"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	zl "github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
+	"github.com/sasha-s/go-deadlock"
 	"golang.org/x/crypto/acme"
 	"golang.org/x/crypto/acme/autocert"
-	"golang.org/x/oauth2"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -51,7 +48,6 @@ import (
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
-	"gorm.io/gorm"
 	"tailscale.com/envknob"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
@@ -69,36 +65,39 @@ var (
 	)
 )
 
+var (
+	debugDeadlock        = envknob.Bool("HEADSCALE_DEBUG_DEADLOCK")
+	debugDeadlockTimeout = envknob.RegisterDuration("HEADSCALE_DEBUG_DEADLOCK_TIMEOUT")
+)
+
+func init() {
+	deadlock.Opts.Disable = !debugDeadlock
+	if debugDeadlock {
+		deadlock.Opts.DeadlockTimeout = debugDeadlockTimeout()
+		deadlock.Opts.PrintAllCurrentGoroutines = true
+	}
+}
+
 const (
 	AuthPrefix         = "Bearer "
 	updateInterval     = 5 * time.Second
 	privateKeyFileMode = 0o600
 	headscaleDirPerm   = 0o700
-
-	registerCacheExpiration = time.Minute * 15
-	registerCacheCleanup    = time.Minute * 20
 )
 
 // Headscale represents the base app of the service.
 type Headscale struct {
 	cfg             *types.Config
-	db              *db.HSDatabase
-	ipAlloc         *db.IPAllocator
+	state           *state.State
 	noisePrivateKey *key.MachinePrivate
 	ephemeralGC     *db.EphemeralGarbageCollector
 
-	DERPMap    *tailcfg.DERPMap
 	DERPServer *derpServer.DERPServer
 
-	ACLPolicy *policy.ACLPolicy
-
-	mapper       *mapper.Mapper
-	nodeNotifier *notifier.Notifier
-
-	oidcProvider *oidc.Provider
-	oauth2Config *oauth2.Config
-
-	registrationCache *cache.Cache
+	// Things that generate changes
+	extraRecordMan *dns.ExtraRecordsMan
+	authProvider   AuthProvider
+	mapBatcher     mapper.Batcher
 
 	pollNetMapStreamWG sync.WaitGroup
 }
@@ -123,65 +122,81 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 		return nil, fmt.Errorf("failed to read or create Noise protocol private key: %w", err)
 	}
 
-	registrationCache := cache.New(
-		registerCacheExpiration,
-		registerCacheCleanup,
-	)
+	s, err := state.NewState(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("init state: %w", err)
+	}
 
 	app := Headscale{
 		cfg:                cfg,
 		noisePrivateKey:    noisePrivateKey,
-		registrationCache:  registrationCache,
 		pollNetMapStreamWG: sync.WaitGroup{},
-		nodeNotifier:       notifier.NewNotifier(cfg),
+		state:              s,
 	}
 
-	app.db, err = db.NewHeadscaleDatabase(
-		cfg.Database,
-		cfg.BaseDomain)
-	if err != nil {
-		return nil, err
-	}
-
-	app.ipAlloc, err = db.NewIPAllocator(app.db, cfg.PrefixV4, cfg.PrefixV6, cfg.IPAllocation)
-	if err != nil {
-		return nil, err
-	}
-
-	app.ephemeralGC = db.NewEphemeralGarbageCollector(func(ni types.NodeID) {
-		if err := app.db.DeleteEphemeralNode(ni); err != nil {
-			log.Err(err).Uint64("node.id", ni.Uint64()).Msgf("failed to delete ephemeral node")
+	// Initialize ephemeral garbage collector
+	ephemeralGC := db.NewEphemeralGarbageCollector(func(ni types.NodeID) {
+		node, err := app.state.GetNodeByID(ni)
+		if err != nil {
+			log.Err(err).Uint64("node.id", ni.Uint64()).Msgf("failed to get ephemeral node for deletion")
+			return
 		}
-	})
 
+		policyChanged, err := app.state.DeleteNode(node)
+		if err != nil {
+			log.Err(err).Uint64("node.id", ni.Uint64()).Msgf("failed to delete ephemeral node")
+			return
+		}
+
+		app.Change(policyChanged)
+		log.Debug().Uint64("node.id", ni.Uint64()).Msgf("deleted ephemeral node")
+	})
+	app.ephemeralGC = ephemeralGC
+
+	var authProvider AuthProvider
+	authProvider = NewAuthProviderWeb(cfg.ServerURL)
 	if cfg.OIDC.Issuer != "" {
-		err = app.initOIDC()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		oidcProvider, err := NewAuthProviderOIDC(
+			ctx,
+			&app,
+			cfg.ServerURL,
+			&cfg.OIDC,
+		)
 		if err != nil {
 			if cfg.OIDC.OnlyStartIfOIDCIsAvailable {
 				return nil, err
 			} else {
 				log.Warn().Err(err).Msg("failed to set up OIDC provider, falling back to CLI based authentication")
 			}
+		} else {
+			authProvider = oidcProvider
 		}
 	}
+	app.authProvider = authProvider
 
-	if app.cfg.DNSConfig != nil && app.cfg.DNSConfig.Proxied { // if MagicDNS
+	if app.cfg.TailcfgDNSConfig != nil && app.cfg.TailcfgDNSConfig.Proxied { // if MagicDNS
 		// TODO(kradalby): revisit why this takes a list.
 
 		var magicDNSDomains []dnsname.FQDN
 		if cfg.PrefixV4 != nil {
-			magicDNSDomains = append(magicDNSDomains, util.GenerateIPv4DNSRootDomain(*cfg.PrefixV4)...)
+			magicDNSDomains = append(
+				magicDNSDomains,
+				util.GenerateIPv4DNSRootDomain(*cfg.PrefixV4)...)
 		}
 		if cfg.PrefixV6 != nil {
-			magicDNSDomains = append(magicDNSDomains, util.GenerateIPv6DNSRootDomain(*cfg.PrefixV6)...)
+			magicDNSDomains = append(
+				magicDNSDomains,
+				util.GenerateIPv6DNSRootDomain(*cfg.PrefixV6)...)
 		}
 
 		// we might have routes already from Split DNS
-		if app.cfg.DNSConfig.Routes == nil {
-			app.cfg.DNSConfig.Routes = make(map[string][]*dnstype.Resolver)
+		if app.cfg.TailcfgDNSConfig.Routes == nil {
+			app.cfg.TailcfgDNSConfig.Routes = make(map[string][]*dnstype.Resolver)
 		}
 		for _, d := range magicDNSDomains {
-			app.cfg.DNSConfig.Routes[d.WithoutTrailingDot()] = nil
+			app.cfg.TailcfgDNSConfig.Routes[d.WithoutTrailingDot()] = nil
 		}
 	}
 
@@ -195,6 +210,14 @@ func NewHeadscale(cfg *types.Config) (*Headscale, error) {
 			return nil, fmt.Errorf(
 				"DERP server private key and noise private key are the same: %w",
 				err,
+			)
+		}
+
+		if cfg.DERP.ServerVerifyClients {
+			t := http.DefaultTransport.(*http.Transport) //nolint:forcetypeassert
+			t.RegisterProtocol(
+				derpServer.DerpVerifyScheme,
+				derpServer.NewDERPVerifyTransport(app.handleVerifyRequest),
 			)
 		}
 
@@ -218,75 +241,73 @@ func (h *Headscale) redirect(w http.ResponseWriter, req *http.Request) {
 	http.Redirect(w, req, target, http.StatusFound)
 }
 
-// expireExpiredNodes expires nodes that have an explicit expiry set
-// after that expiry time has passed.
-func (h *Headscale) expireExpiredNodes(ctx context.Context, every time.Duration) {
-	ticker := time.NewTicker(every)
+func (h *Headscale) scheduledTasks(ctx context.Context) {
+	expireTicker := time.NewTicker(updateInterval)
+	defer expireTicker.Stop()
 
-	lastCheck := time.Unix(0, 0)
-	var update types.StateUpdate
-	var changed bool
+	lastExpiryCheck := time.Unix(0, 0)
+
+	derpTickerChan := make(<-chan time.Time)
+	if h.cfg.DERP.AutoUpdate && h.cfg.DERP.UpdateFrequency != 0 {
+		derpTicker := time.NewTicker(h.cfg.DERP.UpdateFrequency)
+		defer derpTicker.Stop()
+		derpTickerChan = derpTicker.C
+	}
+
+	var extraRecordsUpdate <-chan []tailcfg.DNSRecord
+	if h.extraRecordMan != nil {
+		extraRecordsUpdate = h.extraRecordMan.UpdateCh()
+	} else {
+		extraRecordsUpdate = make(chan []tailcfg.DNSRecord)
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			ticker.Stop()
+			log.Info().Caller().Msg("scheduled task worker is shutting down.")
 			return
-		case <-ticker.C:
-			if err := h.db.Write(func(tx *gorm.DB) error {
-				lastCheck, update, changed = db.ExpireExpiredNodes(tx, lastCheck)
 
-				return nil
-			}); err != nil {
-				log.Error().Err(err).Msg("database error while expiring nodes")
-				continue
-			}
+		case <-expireTicker.C:
+			var expiredNodeChanges []change.ChangeSet
+			var changed bool
+
+			lastExpiryCheck, expiredNodeChanges, changed = h.state.ExpireExpiredNodes(lastExpiryCheck)
 
 			if changed {
-				log.Trace().Interface("nodes", update.ChangePatches).Msgf("expiring nodes")
+				log.Trace().Interface("changes", expiredNodeChanges).Msgf("expiring nodes")
 
-				ctx := types.NotifyCtx(context.Background(), "expire-expired", "na")
-				h.nodeNotifier.NotifyAll(ctx, update)
+				// Send the changes directly since they're already in the new format
+				for _, nodeChange := range expiredNodeChanges {
+					h.Change(nodeChange)
+				}
 			}
-		}
-	}
-}
 
-// scheduledDERPMapUpdateWorker refreshes the DERPMap stored on the global object
-// at a set interval.
-func (h *Headscale) scheduledDERPMapUpdateWorker(cancelChan <-chan struct{}) {
-	log.Info().
-		Dur("frequency", h.cfg.DERP.UpdateFrequency).
-		Msg("Setting up a DERPMap update worker")
-	ticker := time.NewTicker(h.cfg.DERP.UpdateFrequency)
-
-	for {
-		select {
-		case <-cancelChan:
-			return
-
-		case <-ticker.C:
+		case <-derpTickerChan:
 			log.Info().Msg("Fetching DERPMap updates")
-			h.DERPMap = derp.GetDERPMap(h.cfg.DERP)
+			derpMap := derp.GetDERPMap(h.cfg.DERP)
 			if h.cfg.DERP.ServerEnabled && h.cfg.DERP.AutomaticallyAddEmbeddedDerpRegion {
 				region, _ := h.DERPServer.GenerateRegion()
-				h.DERPMap.Regions[region.RegionID] = &region
+				derpMap.Regions[region.RegionID] = &region
 			}
 
-			ctx := types.NotifyCtx(context.Background(), "derpmap-update", "na")
-			h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-				Type:    types.StateDERPUpdated,
-				DERPMap: h.DERPMap,
-			})
+			h.Change(change.DERPSet)
+
+		case records, ok := <-extraRecordsUpdate:
+			if !ok {
+				continue
+			}
+			h.cfg.TailcfgDNSConfig.ExtraRecords = records
+
+			h.Change(change.ExtraRecordsSet)
 		}
 	}
 }
 
 func (h *Headscale) grpcAuthenticationInterceptor(ctx context.Context,
-	req interface{},
+	req any,
 	info *grpc.UnaryServerInfo,
 	handler grpc.UnaryHandler,
-) (interface{}, error) {
+) (any, error) {
 	// Check if the request is coming from the on-server client.
 	// This is not secure, but it is to maintain maintainability
 	// with the "legacy" database-based client
@@ -324,7 +345,7 @@ func (h *Headscale) grpcAuthenticationInterceptor(ctx context.Context,
 		)
 	}
 
-	valid, err := h.db.ValidateAPIKey(strings.TrimPrefix(token, AuthPrefix))
+	valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(token, AuthPrefix))
 	if err != nil {
 		return ctx, status.Error(codes.Internal, "failed to validate token")
 	}
@@ -369,7 +390,7 @@ func (h *Headscale) httpAuthenticationMiddleware(next http.Handler) http.Handler
 			return
 		}
 
-		valid, err := h.db.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
+		valid, err := h.state.ValidateAPIKey(strings.TrimPrefix(authHeader, AuthPrefix))
 		if err != nil {
 			log.Error().
 				Caller().
@@ -425,14 +446,18 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *mux.Router {
 	router := mux.NewRouter()
 	router.Use(prometheusMiddleware)
 
-	router.HandleFunc(ts2021UpgradePath, h.NoiseUpgradeHandler).Methods(http.MethodPost)
+	router.HandleFunc(ts2021UpgradePath, h.NoiseUpgradeHandler).
+		Methods(http.MethodPost, http.MethodGet)
 
+	router.HandleFunc("/robots.txt", h.RobotsHandler).Methods(http.MethodGet)
 	router.HandleFunc("/health", h.HealthHandler).Methods(http.MethodGet)
 	router.HandleFunc("/key", h.KeyHandler).Methods(http.MethodGet)
-	router.HandleFunc("/register/{mkey}", h.RegisterWebAPI).Methods(http.MethodGet)
+	router.HandleFunc("/register/{registration_id}", h.authProvider.RegisterHandler).
+		Methods(http.MethodGet)
 
-	router.HandleFunc("/oidc/register/{mkey}", h.RegisterOIDC).Methods(http.MethodGet)
-	router.HandleFunc("/oidc/callback", h.OIDCCallback).Methods(http.MethodGet)
+	if provider, ok := h.authProvider.(*AuthProviderOIDC); ok {
+		router.HandleFunc("/oidc/callback", provider.OIDCCallbackHandler).Methods(http.MethodGet)
+	}
 	router.HandleFunc("/apple", h.AppleConfigMessage).Methods(http.MethodGet)
 	router.HandleFunc("/apple/{platform}", h.ApplePlatformConfig).
 		Methods(http.MethodGet)
@@ -443,10 +468,13 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *mux.Router {
 	router.HandleFunc("/swagger/v1/openapiv2.json", headscale.SwaggerAPIv1).
 		Methods(http.MethodGet)
 
+	router.HandleFunc("/verify", h.VerifyHandler).Methods(http.MethodPost)
+
 	if h.cfg.DERP.ServerEnabled {
 		router.HandleFunc("/derp", h.DERPServer.DERPHandler)
 		router.HandleFunc("/derp/probe", derpServer.DERPProbeHandler)
-		router.HandleFunc("/bootstrap-dns", derpServer.DERPBootstrapDNSHandler(h.DERPMap))
+		router.HandleFunc("/derp/latency-check", derpServer.DERPProbeHandler)
+		router.HandleFunc("/bootstrap-dns", derpServer.DERPBootstrapDNSHandler(h.state.DERPMap()))
 	}
 
 	apiRouter := router.PathPrefix("/api").Subrouter()
@@ -460,6 +488,8 @@ func (h *Headscale) createRouter(grpcMux *grpcRuntime.ServeMux) *mux.Router {
 
 // Serve launches the HTTP and gRPC server service Headscale and the API.
 func (h *Headscale) Serve() error {
+	capver.CanOldCodeBeCleanedUp()
+
 	if profilingEnabled {
 		if profilingPath != "" {
 			err := os.MkdirAll(profilingPath, os.ModePerm)
@@ -473,20 +503,20 @@ func (h *Headscale) Serve() error {
 		}
 	}
 
-	var err error
-
-	if err = h.loadACLPolicy(); err != nil {
-		return fmt.Errorf("failed to load ACL policy: %w", err)
-	}
-
 	if dumpConfig {
 		spew.Dump(h.cfg)
 	}
 
-	// Fetch an initial DERP Map before we start serving
-	h.DERPMap = derp.GetDERPMap(h.cfg.DERP)
-	h.mapper = mapper.NewMapper(h.db, h.cfg, h.DERPMap, h.nodeNotifier)
+	log.Info().Str("version", types.Version).Str("commit", types.GitCommitHash).Msg("Starting Headscale")
+	log.Info().
+		Str("minimum_version", capver.TailscaleVersion(capver.MinSupportedCapabilityVersion)).
+		Msg("Clients with a lower minimum version will be rejected")
 
+	h.mapBatcher = mapper.NewBatcherAndMapper(h.cfg, h.state)
+	h.mapBatcher.Start()
+	defer h.mapBatcher.Close()
+
+	// TODO(kradalby): fix state part.
 	if h.cfg.DERP.ServerEnabled {
 		// When embedded DERP is enabled we always need a STUN server
 		if h.cfg.DERP.STUNAddr == "" {
@@ -499,19 +529,13 @@ func (h *Headscale) Serve() error {
 		}
 
 		if h.cfg.DERP.AutomaticallyAddEmbeddedDerpRegion {
-			h.DERPMap.Regions[region.RegionID] = &region
+			h.state.DERPMap().Regions[region.RegionID] = &region
 		}
 
 		go h.DERPServer.ServeSTUN()
 	}
 
-	if h.cfg.DERP.AutoUpdate {
-		derpMapCancelChannel := make(chan struct{})
-		defer func() { derpMapCancelChannel <- struct{}{} }()
-		go h.scheduledDERPMapUpdateWorker(derpMapCancelChannel)
-	}
-
-	if len(h.DERPMap.Regions) == 0 {
+	if len(h.state.DERPMap().Regions) == 0 {
 		return errEmptyInitialDERPMap
 	}
 
@@ -520,7 +544,7 @@ func (h *Headscale) Serve() error {
 	// around between restarts, they will reconnect and the GC will
 	// be cancelled.
 	go h.ephemeralGC.Start()
-	ephmNodes, err := h.db.ListEphemeralNodes()
+	ephmNodes, err := h.state.ListEphemeralNodes()
 	if err != nil {
 		return fmt.Errorf("failed to list ephemeral nodes: %w", err)
 	}
@@ -528,9 +552,21 @@ func (h *Headscale) Serve() error {
 		h.ephemeralGC.Schedule(node.ID, h.cfg.EphemeralNodeInactivityTimeout)
 	}
 
-	expireNodeCtx, expireNodeCancel := context.WithCancel(context.Background())
-	defer expireNodeCancel()
-	go h.expireExpiredNodes(expireNodeCtx, updateInterval)
+	if h.cfg.DNSConfig.ExtraRecordsPath != "" {
+		h.extraRecordMan, err = dns.NewExtraRecordsManager(h.cfg.DNSConfig.ExtraRecordsPath)
+		if err != nil {
+			return fmt.Errorf("setting up extrarecord manager: %w", err)
+		}
+		h.cfg.TailcfgDNSConfig.ExtraRecords = h.extraRecordMan.Records()
+		go h.extraRecordMan.Run()
+		defer h.extraRecordMan.Close()
+	}
+
+	// Start all scheduled tasks, e.g. expiring nodes, derp updates and
+	// records updates
+	scheduleCtx, scheduleCancel := context.WithCancel(context.Background())
+	defer scheduleCancel()
+	go h.scheduledTasks(scheduleCtx)
 
 	if zl.GlobalLevel() == zl.TraceLevel {
 		zerolog.RespLog = true
@@ -631,12 +667,10 @@ func (h *Headscale) Serve() error {
 		log.Info().Msgf("Enabling remote gRPC at %s", h.cfg.GRPCAddr)
 
 		grpcOptions := []grpc.ServerOption{
-			grpc.UnaryInterceptor(
-				grpcMiddleware.ChainUnaryServer(
-					h.grpcAuthenticationInterceptor,
-					// Uncomment to debug grpc communication.
-					// zerolog.NewUnaryServerInterceptor(),
-				),
+			grpc.ChainUnaryInterceptor(
+				h.grpcAuthenticationInterceptor,
+				// Uncomment to debug grpc communication.
+				// zerolog.NewUnaryServerInterceptor(),
 			),
 		}
 
@@ -698,26 +732,12 @@ func (h *Headscale) Serve() error {
 	log.Info().
 		Msgf("listening and serving HTTP on: %s", h.cfg.Addr)
 
-	debugMux := http.NewServeMux()
-	debugMux.Handle("/debug/pprof/", http.DefaultServeMux)
-	debugMux.HandleFunc("/debug/notifier", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(h.nodeNotifier.String()))
-	})
-	debugMux.Handle("/metrics", promhttp.Handler())
-
-	debugHTTPServer := &http.Server{
-		Addr:         h.cfg.MetricsAddr,
-		Handler:      debugMux,
-		ReadTimeout:  types.HTTPTimeout,
-		WriteTimeout: 0,
-	}
-
 	debugHTTPListener, err := net.Listen("tcp", h.cfg.MetricsAddr)
 	if err != nil {
 		return fmt.Errorf("failed to bind to TCP address: %w", err)
 	}
 
+	debugHTTPServer := h.debugHTTPServer()
 	errorGroup.Go(func() error { return debugHTTPServer.Serve(debugHTTPListener) })
 
 	log.Info().
@@ -753,21 +773,28 @@ func (h *Headscale) Serve() error {
 			case syscall.SIGHUP:
 				log.Info().
 					Str("signal", sig.String()).
-					Msg("Received SIGHUP, reloading ACL and Config")
+					Msg("Received SIGHUP, reloading ACL policy")
 
-				// TODO(kradalby): Reload config on SIGHUP
-				if err := h.loadACLPolicy(); err != nil {
-					log.Error().Err(err).Msg("failed to reload ACL policy")
+				if h.cfg.Policy.IsEmpty() {
+					continue
 				}
 
-				if h.ACLPolicy != nil {
+				changed, err := h.state.ReloadPolicy()
+				if err != nil {
+					log.Error().Err(err).Msgf("reloading policy")
+					continue
+				}
+
+				if changed {
 					log.Info().
 						Msg("ACL policy successfully reloaded, notifying nodes of change")
 
-					ctx := types.NotifyCtx(context.Background(), "acl-sighup", "na")
-					h.nodeNotifier.NotifyAll(ctx, types.StateUpdate{
-						Type: types.StateFullUpdate,
-					})
+					err = h.state.AutoApproveNodes()
+					if err != nil {
+						log.Error().Err(err).Msg("failed to approve routes after new policy")
+					}
+
+					h.Change(change.PolicySet)
 				}
 			default:
 				info := func(msg string) { log.Info().Msg(msg) }
@@ -775,7 +802,7 @@ func (h *Headscale) Serve() error {
 					Str("signal", sig.String()).
 					Msg("Received signal to stop, shutting down gracefully")
 
-				expireNodeCancel()
+				scheduleCancel()
 				h.ephemeralGC.Close()
 
 				// Gracefully shut down servers
@@ -793,7 +820,6 @@ func (h *Headscale) Serve() error {
 				}
 
 				info("closing node notifier")
-				h.nodeNotifier.Close()
 
 				info("waiting for netmap stream to close")
 				h.pollNetMapStreamWG.Wait()
@@ -824,7 +850,7 @@ func (h *Headscale) Serve() error {
 
 				// Close db connections
 				info("closing database connection")
-				err = h.db.Close()
+				err = h.state.Close()
 				if err != nil {
 					log.Error().Err(err).Msg("failed to close db")
 				}
@@ -924,13 +950,10 @@ func notFoundHandler(
 	writer http.ResponseWriter,
 	req *http.Request,
 ) {
-	body, _ := io.ReadAll(req.Body)
-
 	log.Trace().
 		Interface("header", req.Header).
 		Interface("proto", req.Proto).
 		Interface("url", req.URL).
-		Bytes("body", body).
 		Msg("Request did not match")
 	writer.WriteHeader(http.StatusNotFound)
 }
@@ -979,73 +1002,9 @@ func readOrCreatePrivateKey(path string) (*key.MachinePrivate, error) {
 	return &machineKey, nil
 }
 
-func (h *Headscale) loadACLPolicy() error {
-	var (
-		pol *policy.ACLPolicy
-		err error
-	)
-
-	switch h.cfg.Policy.Mode {
-	case types.PolicyModeFile:
-		path := h.cfg.Policy.Path
-
-		// It is fine to start headscale without a policy file.
-		if len(path) == 0 {
-			return nil
-		}
-
-		absPath := util.AbsolutePathFromConfigPath(path)
-		pol, err = policy.LoadACLPolicyFromPath(absPath)
-		if err != nil {
-			return fmt.Errorf("failed to load ACL policy from file: %w", err)
-		}
-
-		// Validate and reject configuration that would error when applied
-		// when creating a map response. This requires nodes, so there is still
-		// a scenario where they might be allowed if the server has no nodes
-		// yet, but it should help for the general case and for hot reloading
-		// configurations.
-		// Note that this check is only done for file-based policies in this function
-		// as the database-based policies are checked in the gRPC API where it is not
-		// allowed to be written to the database.
-		nodes, err := h.db.ListNodes()
-		if err != nil {
-			return fmt.Errorf("loading nodes from database to validate policy: %w", err)
-		}
-
-		_, err = pol.CompileFilterRules(nodes)
-		if err != nil {
-			return fmt.Errorf("verifying policy rules: %w", err)
-		}
-
-		if len(nodes) > 0 {
-			_, err = pol.CompileSSHPolicy(nodes[0], nodes)
-			if err != nil {
-				return fmt.Errorf("verifying SSH rules: %w", err)
-			}
-		}
-
-	case types.PolicyModeDB:
-		p, err := h.db.GetPolicy()
-		if err != nil {
-			if errors.Is(err, types.ErrPolicyNotFound) {
-				return nil
-			}
-
-			return fmt.Errorf("failed to get policy from database: %w", err)
-		}
-
-		pol, err = policy.LoadACLPolicyFromBytes([]byte(p.Data))
-		if err != nil {
-			return fmt.Errorf("failed to parse policy: %w", err)
-		}
-	default:
-		log.Fatal().
-			Str("mode", string(h.cfg.Policy.Mode)).
-			Msg("Unknown ACL policy mode")
-	}
-
-	h.ACLPolicy = pol
-
-	return nil
+// Change is used to send changes to nodes.
+// All change should be enqueued here and empty will be automatically
+// ignored.
+func (h *Headscale) Change(c change.ChangeSet) {
+	h.mapBatcher.AddWork(c)
 }

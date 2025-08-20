@@ -4,11 +4,15 @@
 
 An open source, self-hosted implementation of the Tailscale control server.
 
-Join our [Discord](https://discord.gg/c84AZQhmpx) server for a chat.
+Join our [Discord server](https://discord.gg/c84AZQhmpx) for a chat.
 
 **Note:** Always select the same GitHub tag as the released version you use
-to ensure you have the correct example configuration and documentation.
-The `main` branch might contain unreleased changes.
+to ensure you have the correct example configuration. The `main` branch might
+contain unreleased changes. The documentation is available for stable and
+development versions:
+
+- [Documentation for the stable version](https://headscale.net/stable/)
+- [Documentation for the development version](https://headscale.net/development/)
 
 ## What is Tailscale
 
@@ -32,12 +36,12 @@ organisation.
 
 ## Design goal
 
-Headscale aims to implement a self-hosted, open source alternative to the Tailscale
-control server.
-Headscale's goal is to provide self-hosters and hobbyists with an open-source
-server they can use for their projects and labs.
-It implements a narrow scope, a single Tailnet, suitable for a personal use, or a small
-open-source organisation.
+Headscale aims to implement a self-hosted, open source alternative to the
+[Tailscale](https://tailscale.com/) control server. Headscale's goal is to
+provide self-hosters and hobbyists with an open-source server they can use for
+their projects and labs. It implements a narrow scope, a _single_ Tailscale
+network (tailnet), suitable for a personal use, or a small open-source
+organisation.
 
 ## Supporting Headscale
 
@@ -46,38 +50,18 @@ buttons available in the repo.
 
 ## Features
 
-- Full "base" support of Tailscale's features
-- Configurable DNS
-  - [Split DNS](https://tailscale.com/kb/1054/dns/#using-dns-settings-in-the-admin-console)
-- Node registration
-  - Single-Sign-On (via Open ID Connect)
-  - Pre authenticated key
-- Taildrop (File Sharing)
-- [Access control lists](https://tailscale.com/kb/1018/acls/)
-- [MagicDNS](https://tailscale.com/kb/1081/magicdns)
-- Dual stack (IPv4 and IPv6)
-- Routing advertising (including exit nodes)
-- Ephemeral nodes
-- Embedded [DERP server](https://tailscale.com/blog/how-tailscale-works/#encrypted-tcp-relays-derp)
+Please see ["Features" in the documentation](https://headscale.net/stable/about/features/).
 
 ## Client OS support
 
-| OS      | Supports headscale                                                                                 |
-| ------- | -------------------------------------------------------------------------------------------------- |
-| Linux   | Yes                                                                                                |
-| OpenBSD | Yes                                                                                                |
-| FreeBSD | Yes                                                                                                |
-| Windows | Yes (see [docs](./docs/windows-client.md) and `/windows` on your headscale for more information)   |
-| Android | Yes (see [docs](./docs/android-client.md))                                                         |
-| macOS   | Yes (see [docs](./docs/apple-client.md#macos) and `/apple` on your headscale for more information) |
-| iOS     | Yes (see [docs](./docs/apple-client.md#ios) and `/apple` on your headscale for more information)   |
+Please see ["Client and operating system support" in the documentation](https://headscale.net/stable/about/clients/).
 
 ## Running headscale
 
 **Please note that we do not support nor encourage the use of reverse proxies
 and container to run Headscale.**
 
-Please have a look at the [`documentation`](https://headscale.net/).
+Please have a look at the [`documentation`](https://headscale.net/stable/).
 
 ## Talks
 
@@ -99,7 +83,7 @@ Please read the [CONTRIBUTING.md](./CONTRIBUTING.md) file.
 ### Requirements
 
 To contribute to headscale you would need the latest version of [Go](https://golang.org)
-and [Buf](https://buf.build)(Protobuf generator).
+and [Buf](https://buf.build) (Protobuf generator).
 
 We recommend using [Nix](https://nixos.org/) to setup a development environment. This can
 be done with `nix develop`, which will install the tools and give you a shell.
@@ -155,14 +139,27 @@ make test
 To build the program:
 
 ```shell
-nix build
-```
-
-or
-
-```shell
 make build
 ```
+
+### Development workflow
+
+We recommend using Nix for dependency management to ensure you have all required tools. If you prefer to manage dependencies yourself, you can use Make directly:
+
+**With Nix (recommended):**
+```shell
+nix develop
+make test
+make build
+```
+
+**With your own dependencies:**
+```shell
+make test
+make build
+```
+
+The Makefile will warn you if any required tools are missing and suggest running `nix develop`. Run `make help` to see all available targets.
 
 ## Contributors
 

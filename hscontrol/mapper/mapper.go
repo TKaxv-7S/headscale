@@ -1,39 +1,29 @@
 package mapper
 
 import (
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"net/url"
 	"os"
 	"path"
 	"slices"
-	"sort"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"time"
 
-	mapset "github.com/deckarep/golang-set/v2"
-	"github.com/juanfont/headscale/hscontrol/db"
-	"github.com/juanfont/headscale/hscontrol/notifier"
-	"github.com/juanfont/headscale/hscontrol/policy"
+	"github.com/juanfont/headscale/hscontrol/state"
 	"github.com/juanfont/headscale/hscontrol/types"
-	"github.com/juanfont/headscale/hscontrol/util"
-	"github.com/klauspost/compress/zstd"
 	"github.com/rs/zerolog/log"
 	"tailscale.com/envknob"
-	"tailscale.com/smallzstd"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/dnstype"
 )
 
 const (
-	nextDNSDoHPrefix           = "https://dns.nextdns.io"
-	reservedResponseHeaderSize = 4
-	mapperIDLength             = 8
-	debugMapResponsePerm       = 0o755
+	nextDNSDoHPrefix     = "https://dns.nextdns.io"
+	mapperIDLength       = 8
+	debugMapResponsePerm = 0o755
 )
 
 var debugDumpMapResponsePath = envknob.String("HEADSCALE_DEBUG_DUMP_MAPRESPONSE_PATH")
@@ -49,17 +39,13 @@ var debugDumpMapResponsePath = envknob.String("HEADSCALE_DEBUG_DUMP_MAPRESPONSE_
 // - Create a "minifier" that removes info not needed for the node
 // - some sort of batching, wait for 5 or 60 seconds before sending
 
-type Mapper struct {
+type mapper struct {
 	// Configuration
-	// TODO(kradalby): figure out if this is the format we want this in
-	db      *db.HSDatabase
+	state   *state.State
 	cfg     *types.Config
-	derpMap *tailcfg.DERPMap
-	notif   *notifier.Notifier
+	batcher Batcher
 
-	uid     string
 	created time.Time
-	seq     uint64
 }
 
 type patch struct {
@@ -67,44 +53,40 @@ type patch struct {
 	change    *tailcfg.PeerChange
 }
 
-func NewMapper(
-	db *db.HSDatabase,
+func newMapper(
 	cfg *types.Config,
-	derpMap *tailcfg.DERPMap,
-	notif *notifier.Notifier,
-) *Mapper {
-	uid, _ := util.GenerateRandomStringDNSSafe(mapperIDLength)
+	state *state.State,
+) *mapper {
+	// uid, _ := util.GenerateRandomStringDNSSafe(mapperIDLength)
 
-	return &Mapper{
-		db:      db,
-		cfg:     cfg,
-		derpMap: derpMap,
-		notif:   notif,
+	return &mapper{
+		state: state,
+		cfg:   cfg,
 
-		uid:     uid,
 		created: time.Now(),
-		seq:     0,
 	}
-}
-
-func (m *Mapper) String() string {
-	return fmt.Sprintf("Mapper: { seq: %d, uid: %s, created: %s }", m.seq, m.uid, m.created)
 }
 
 func generateUserProfiles(
 	node *types.Node,
 	peers types.Nodes,
 ) []tailcfg.UserProfile {
-	userMap := make(map[string]types.User)
-	userMap[node.User.Name] = node.User
+	userMap := make(map[uint]*types.User)
+	ids := make([]uint, 0, len(userMap))
+	userMap[node.User.ID] = &node.User
+	ids = append(ids, node.User.ID)
 	for _, peer := range peers {
-		userMap[peer.User.Name] = peer.User // not worth checking if already is there
+		userMap[peer.User.ID] = &peer.User
+		ids = append(ids, peer.User.ID)
 	}
 
+	slices.Sort(ids)
+	ids = slices.Compact(ids)
 	var profiles []tailcfg.UserProfile
-	for _, user := range userMap {
-		profiles = append(profiles,
-			user.TailscaleUserProfile())
+	for _, id := range ids {
+		if userMap[id] != nil {
+			profiles = append(profiles, userMap[id].TailscaleUserProfile())
+		}
 	}
 
 	return profiles
@@ -112,41 +94,13 @@ func generateUserProfiles(
 
 func generateDNSConfig(
 	cfg *types.Config,
-	baseDomain string,
 	node *types.Node,
-	peers types.Nodes,
 ) *tailcfg.DNSConfig {
-	if cfg.DNSConfig == nil {
+	if cfg.TailcfgDNSConfig == nil {
 		return nil
 	}
 
-	dnsConfig := cfg.DNSConfig.Clone()
-
-	// if MagicDNS is enabled
-	if dnsConfig.Proxied {
-		if cfg.DNSUserNameInMagicDNS {
-			// Only inject the Search Domain of the current user
-			// shared nodes should use their full FQDN
-			dnsConfig.Domains = append(
-				dnsConfig.Domains,
-				fmt.Sprintf(
-					"%s.%s",
-					node.User.Name,
-					baseDomain,
-				),
-			)
-
-			userSet := mapset.NewSet[types.User]()
-			userSet.Add(node.User)
-			for _, p := range peers {
-				userSet.Add(p.User)
-			}
-			for _, user := range userSet.ToSlice() {
-				dnsRoute := fmt.Sprintf("%v.%v", user.Name, baseDomain)
-				dnsConfig.Routes[dnsRoute] = nil
-			}
-		}
-	}
+	dnsConfig := cfg.TailcfgDNSConfig.Clone()
 
 	addNextDNSMetadata(dnsConfig.Resolvers, node)
 
@@ -177,435 +131,151 @@ func addNextDNSMetadata(resolvers []*dnstype.Resolver, node *types.Node) {
 	}
 }
 
-// fullMapResponse creates a complete MapResponse for a node.
-// It is a separate function to make testing easier.
-func (m *Mapper) fullMapResponse(
-	node *types.Node,
-	peers types.Nodes,
-	pol *policy.ACLPolicy,
+// fullMapResponse returns a MapResponse for the given node.
+func (m *mapper) fullMapResponse(
+	nodeID types.NodeID,
 	capVer tailcfg.CapabilityVersion,
+	messages ...string,
 ) (*tailcfg.MapResponse, error) {
-	resp, err := m.baseWithConfigMapResponse(node, pol, capVer)
+	peers, err := m.listPeers(nodeID)
 	if err != nil {
 		return nil, err
 	}
 
-	err = appendPeerChanges(
-		resp,
-		true, // full change
-		pol,
-		node,
-		capVer,
-		peers,
-		peers,
-		m.cfg,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return resp, nil
+	return m.NewMapResponseBuilder(nodeID).
+		WithCapabilityVersion(capVer).
+		WithSelfNode().
+		WithDERPMap().
+		WithDomain().
+		WithCollectServicesDisabled().
+		WithDebugConfig().
+		WithSSHPolicy().
+		WithDNSConfig().
+		WithUserProfiles(peers).
+		WithPacketFilters().
+		WithPeers(peers).
+		Build(messages...)
 }
 
-// FullMapResponse returns a MapResponse for the given node.
-func (m *Mapper) FullMapResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	pol *policy.ACLPolicy,
-	messages ...string,
-) ([]byte, error) {
-	peers, err := m.ListPeers(node.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := m.fullMapResponse(node, peers, pol, mapRequest.Version)
-	if err != nil {
-		return nil, err
-	}
-
-	return m.marshalMapResponse(mapRequest, resp, node, mapRequest.Compress, messages...)
-}
-
-// ReadOnlyMapResponse returns a MapResponse for the given node.
-// Lite means that the peers has been omitted, this is intended
-// to be used to answer MapRequests with OmitPeers set to true.
-func (m *Mapper) ReadOnlyMapResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	pol *policy.ACLPolicy,
-	messages ...string,
-) ([]byte, error) {
-	resp, err := m.baseWithConfigMapResponse(node, pol, mapRequest.Version)
-	if err != nil {
-		return nil, err
-	}
-
-	return m.marshalMapResponse(mapRequest, resp, node, mapRequest.Compress, messages...)
-}
-
-func (m *Mapper) KeepAliveResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-) ([]byte, error) {
-	resp := m.baseMapResponse()
-	resp.KeepAlive = true
-
-	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress)
-}
-
-func (m *Mapper) DERPMapResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	derpMap *tailcfg.DERPMap,
-) ([]byte, error) {
-	m.derpMap = derpMap
-
-	resp := m.baseMapResponse()
-	resp.DERPMap = derpMap
-
-	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress)
-}
-
-func (m *Mapper) PeerChangedResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-	changed map[types.NodeID]bool,
-	patches []*tailcfg.PeerChange,
-	pol *policy.ACLPolicy,
-	messages ...string,
-) ([]byte, error) {
-	resp := m.baseMapResponse()
-
-	peers, err := m.ListPeers(node.ID)
-	if err != nil {
-		return nil, err
-	}
-
-	var removedIDs []tailcfg.NodeID
-	var changedIDs []types.NodeID
-	for nodeID, nodeChanged := range changed {
-		if nodeChanged {
-			changedIDs = append(changedIDs, nodeID)
-		} else {
-			removedIDs = append(removedIDs, nodeID.NodeID())
-		}
-	}
-
-	changedNodes := make(types.Nodes, 0, len(changedIDs))
-	for _, peer := range peers {
-		if slices.Contains(changedIDs, peer.ID) {
-			changedNodes = append(changedNodes, peer)
-		}
-	}
-
-	err = appendPeerChanges(
-		&resp,
-		false, // partial change
-		pol,
-		node,
-		mapRequest.Version,
-		peers,
-		changedNodes,
-		m.cfg,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	resp.PeersRemoved = removedIDs
-
-	// Sending patches as a part of a PeersChanged response
-	// is technically not suppose to be done, but they are
-	// applied after the PeersChanged. The patch list
-	// should _only_ contain Nodes that are not in the
-	// PeersChanged or PeersRemoved list and the caller
-	// should filter them out.
-	//
-	// From tailcfg docs:
-	// These are applied after Peers* above, but in practice the
-	// control server should only send these on their own, without
-	// the Peers* fields also set.
-	if patches != nil {
-		resp.PeersChangedPatch = patches
-	}
-
-	// Add the node itself, it might have changed, and particularly
-	// if there are no patches or changes, this is a self update.
-	tailnode, err := tailNode(node, mapRequest.Version, pol, m.cfg)
-	if err != nil {
-		return nil, err
-	}
-	resp.Node = tailnode
-
-	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress, messages...)
+func (m *mapper) derpMapResponse(
+	nodeID types.NodeID,
+) (*tailcfg.MapResponse, error) {
+	return m.NewMapResponseBuilder(nodeID).
+		WithDERPMap().
+		Build()
 }
 
 // PeerChangedPatchResponse creates a patch MapResponse with
 // incoming update from a state change.
-func (m *Mapper) PeerChangedPatchResponse(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
+func (m *mapper) peerChangedPatchResponse(
+	nodeID types.NodeID,
 	changed []*tailcfg.PeerChange,
-	pol *policy.ACLPolicy,
-) ([]byte, error) {
-	resp := m.baseMapResponse()
-	resp.PeersChangedPatch = changed
-
-	return m.marshalMapResponse(mapRequest, &resp, node, mapRequest.Compress)
-}
-
-func (m *Mapper) marshalMapResponse(
-	mapRequest tailcfg.MapRequest,
-	resp *tailcfg.MapResponse,
-	node *types.Node,
-	compression string,
-	messages ...string,
-) ([]byte, error) {
-	atomic.AddUint64(&m.seq, 1)
-
-	jsonBody, err := json.Marshal(resp)
-	if err != nil {
-		return nil, fmt.Errorf("marshalling map response: %w", err)
-	}
-
-	if debugDumpMapResponsePath != "" {
-		data := map[string]interface{}{
-			"Messages":    messages,
-			"MapRequest":  mapRequest,
-			"MapResponse": resp,
-		}
-
-		responseType := "keepalive"
-
-		switch {
-		case resp.Peers != nil && len(resp.Peers) > 0:
-			responseType = "full"
-		case resp.Peers == nil && resp.PeersChanged == nil && resp.PeersChangedPatch == nil && resp.DERPMap == nil && !resp.KeepAlive:
-			responseType = "self"
-		case resp.PeersChanged != nil && len(resp.PeersChanged) > 0:
-			responseType = "changed"
-		case resp.PeersChangedPatch != nil && len(resp.PeersChangedPatch) > 0:
-			responseType = "patch"
-		case resp.PeersRemoved != nil && len(resp.PeersRemoved) > 0:
-			responseType = "removed"
-		}
-
-		body, err := json.MarshalIndent(data, "", "  ")
-		if err != nil {
-			return nil, fmt.Errorf("marshalling map response: %w", err)
-		}
-
-		perms := fs.FileMode(debugMapResponsePerm)
-		mPath := path.Join(debugDumpMapResponsePath, node.Hostname)
-		err = os.MkdirAll(mPath, perms)
-		if err != nil {
-			panic(err)
-		}
-
-		now := time.Now().Format("2006-01-02T15-04-05.999999999")
-
-		mapResponsePath := path.Join(
-			mPath,
-			fmt.Sprintf("%s-%s-%d-%s.json", now, m.uid, atomic.LoadUint64(&m.seq), responseType),
-		)
-
-		log.Trace().Msgf("Writing MapResponse to %s", mapResponsePath)
-		err = os.WriteFile(mapResponsePath, body, perms)
-		if err != nil {
-			panic(err)
-		}
-	}
-
-	var respBody []byte
-	if compression == util.ZstdCompression {
-		respBody = zstdEncode(jsonBody)
-	} else {
-		respBody = jsonBody
-	}
-
-	data := make([]byte, reservedResponseHeaderSize)
-	binary.LittleEndian.PutUint32(data, uint32(len(respBody)))
-	data = append(data, respBody...)
-
-	return data, nil
-}
-
-func zstdEncode(in []byte) []byte {
-	encoder, ok := zstdEncoderPool.Get().(*zstd.Encoder)
-	if !ok {
-		panic("invalid type in sync pool")
-	}
-	out := encoder.EncodeAll(in, nil)
-	_ = encoder.Close()
-	zstdEncoderPool.Put(encoder)
-
-	return out
-}
-
-var zstdEncoderPool = &sync.Pool{
-	New: func() any {
-		encoder, err := smallzstd.NewEncoder(
-			nil,
-			zstd.WithEncoderLevel(zstd.SpeedFastest))
-		if err != nil {
-			panic(err)
-		}
-
-		return encoder
-	},
-}
-
-// baseMapResponse returns a tailcfg.MapResponse with
-// KeepAlive false and ControlTime set to now.
-func (m *Mapper) baseMapResponse() tailcfg.MapResponse {
-	now := time.Now()
-
-	resp := tailcfg.MapResponse{
-		KeepAlive:   false,
-		ControlTime: &now,
-		// TODO(kradalby): Implement PingRequest?
-	}
-
-	return resp
-}
-
-// baseWithConfigMapResponse returns a tailcfg.MapResponse struct
-// with the basic configuration from headscale set.
-// It is used in for bigger updates, such as full and lite, not
-// incremental.
-func (m *Mapper) baseWithConfigMapResponse(
-	node *types.Node,
-	pol *policy.ACLPolicy,
-	capVer tailcfg.CapabilityVersion,
 ) (*tailcfg.MapResponse, error) {
-	resp := m.baseMapResponse()
-
-	tailnode, err := tailNode(node, capVer, pol, m.cfg)
-	if err != nil {
-		return nil, err
-	}
-	resp.Node = tailnode
-
-	resp.DERPMap = m.derpMap
-
-	resp.Domain = m.cfg.BaseDomain
-
-	// Do not instruct clients to collect services we do not
-	// support or do anything with them
-	resp.CollectServices = "false"
-
-	resp.KeepAlive = false
-
-	resp.Debug = &tailcfg.Debug{
-		DisableLogTail: !m.cfg.LogTail.Enabled,
-	}
-
-	return &resp, nil
+	return m.NewMapResponseBuilder(nodeID).
+		WithPeerChangedPatch(changed).
+		Build()
 }
 
-func (m *Mapper) ListPeers(nodeID types.NodeID) (types.Nodes, error) {
-	peers, err := m.db.ListPeers(nodeID)
+// peerChangeResponse returns a MapResponse with changed or added nodes.
+func (m *mapper) peerChangeResponse(
+	nodeID types.NodeID,
+	capVer tailcfg.CapabilityVersion,
+	changedNodeID types.NodeID,
+) (*tailcfg.MapResponse, error) {
+	peers, err := m.listPeers(nodeID, changedNodeID)
 	if err != nil {
 		return nil, err
 	}
 
+	return m.NewMapResponseBuilder(nodeID).
+		WithCapabilityVersion(capVer).
+		WithSelfNode().
+		WithUserProfiles(peers).
+		WithPeerChanges(peers).
+		Build()
+}
+
+// peerRemovedResponse creates a MapResponse indicating that a peer has been removed.
+func (m *mapper) peerRemovedResponse(
+	nodeID types.NodeID,
+	removedNodeID types.NodeID,
+) (*tailcfg.MapResponse, error) {
+	return m.NewMapResponseBuilder(nodeID).
+		WithPeersRemoved(removedNodeID).
+		Build()
+}
+
+func writeDebugMapResponse(
+	resp *tailcfg.MapResponse,
+	nodeID types.NodeID,
+	messages ...string,
+) {
+	data := map[string]any{
+		"Messages":    messages,
+		"MapResponse": resp,
+	}
+
+	responseType := "keepalive"
+
+	switch {
+	case len(resp.Peers) > 0:
+		responseType = "full"
+	case resp.Peers == nil && resp.PeersChanged == nil && resp.PeersChangedPatch == nil && resp.DERPMap == nil && !resp.KeepAlive:
+		responseType = "self"
+	case len(resp.PeersChanged) > 0:
+		responseType = "changed"
+	case len(resp.PeersChangedPatch) > 0:
+		responseType = "patch"
+	case len(resp.PeersRemoved) > 0:
+		responseType = "removed"
+	}
+
+	body, err := json.MarshalIndent(data, "", "  ")
+	if err != nil {
+		panic(err)
+	}
+
+	perms := fs.FileMode(debugMapResponsePerm)
+	mPath := path.Join(debugDumpMapResponsePath, nodeID.String())
+	err = os.MkdirAll(mPath, perms)
+	if err != nil {
+		panic(err)
+	}
+
+	now := time.Now().Format("2006-01-02T15-04-05.999999999")
+
+	mapResponsePath := path.Join(
+		mPath,
+		fmt.Sprintf("%s-%s.json", now, responseType),
+	)
+
+	log.Trace().Msgf("Writing MapResponse to %s", mapResponsePath)
+	err = os.WriteFile(mapResponsePath, body, perms)
+	if err != nil {
+		panic(err)
+	}
+}
+
+// listPeers returns peers of node, regardless of any Policy or if the node is expired.
+// If no peer IDs are given, all peers are returned.
+// If at least one peer ID is given, only these peer nodes will be returned.
+func (m *mapper) listPeers(nodeID types.NodeID, peerIDs ...types.NodeID) (types.Nodes, error) {
+	peers, err := m.state.ListPeers(nodeID, peerIDs...)
+	if err != nil {
+		return nil, err
+	}
+
+	// TODO(kradalby): Add back online via batcher. This was removed
+	// to avoid a circular dependency between the mapper and the notification.
 	for _, peer := range peers {
-		online := m.notif.IsLikelyConnected(peer.ID)
+		online := m.batcher.IsConnected(peer.ID)
 		peer.IsOnline = &online
 	}
 
 	return peers, nil
 }
 
-func nodeMapToList(nodes map[uint64]*types.Node) types.Nodes {
-	ret := make(types.Nodes, 0)
-
-	for _, node := range nodes {
-		ret = append(ret, node)
-	}
-
-	return ret
-}
-
-// appendPeerChanges mutates a tailcfg.MapResponse with all the
-// necessary changes when peers have changed.
-func appendPeerChanges(
-	resp *tailcfg.MapResponse,
-
-	fullChange bool,
-	pol *policy.ACLPolicy,
-	node *types.Node,
-	capVer tailcfg.CapabilityVersion,
-	peers types.Nodes,
-	changed types.Nodes,
-	cfg *types.Config,
-) error {
-	packetFilter, err := pol.CompileFilterRules(append(peers, node))
-	if err != nil {
-		return err
-	}
-
-	sshPolicy, err := pol.CompileSSHPolicy(node, peers)
-	if err != nil {
-		return err
-	}
-
-	// If there are filter rules present, see if there are any nodes that cannot
-	// access each-other at all and remove them from the peers.
-	if len(packetFilter) > 0 {
-		changed = policy.FilterNodesByACL(node, changed, packetFilter)
-	}
-
-	profiles := generateUserProfiles(node, changed)
-
-	dnsConfig := generateDNSConfig(
-		cfg,
-		cfg.BaseDomain,
-		node,
-		peers,
-	)
-
-	tailPeers, err := tailNodes(changed, capVer, pol, cfg)
-	if err != nil {
-		return err
-	}
-
-	// Peers is always returned sorted by Node.ID.
-	sort.SliceStable(tailPeers, func(x, y int) bool {
-		return tailPeers[x].ID < tailPeers[y].ID
-	})
-
-	if fullChange {
-		resp.Peers = tailPeers
-	} else {
-		resp.PeersChanged = tailPeers
-	}
-	resp.DNSConfig = dnsConfig
-	resp.UserProfiles = profiles
-	resp.SSHPolicy = sshPolicy
-
-	// 81: 2023-11-17: MapResponse.PacketFilters (incremental packet filter updates)
-	if capVer >= 81 {
-		// Currently, we do not send incremental package filters, however using the
-		// new PacketFilters field and "base" allows us to send a full update when we
-		// have to send an empty list, avoiding the hack in the else block.
-		resp.PacketFilters = map[string][]tailcfg.FilterRule{
-			"base": policy.ReduceFilterRules(node, packetFilter),
-		}
-	} else {
-		// This is a hack to avoid sending an empty list of packet filters.
-		// Since tailcfg.PacketFilter has omitempty, any empty PacketFilter will
-		// be omitted, causing the client to consider it unchanged, keeping the
-		// previous packet filter. Worst case, this can cause a node that previously
-		// has access to a node to _not_ loose access if an empty (allow none) is sent.
-		reduced := policy.ReduceFilterRules(node, packetFilter)
-		if len(reduced) > 0 {
-			resp.PacketFilter = reduced
-		} else {
-			resp.PacketFilter = packetFilter
-		}
-	}
-
-	return nil
-}
+// routeFilterFunc is a function that takes a node ID and returns a list of
+// netip.Prefixes that are allowed for that node. It is used to filter routes
+// from the primary route manager to the node.
+type routeFilterFunc func(id types.NodeID) []netip.Prefix
