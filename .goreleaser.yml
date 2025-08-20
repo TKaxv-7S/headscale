@@ -25,8 +25,8 @@ builds:
       - -mod=readonly
     ldflags:
       - -s -w
-      - -X github.com/juanfont/headscale/hscontrol/types.Version={{ .Version }}
-      - -X github.com/juanfont/headscale/hscontrol/types.GitCommitHash={{ .Commit }}
+      - -X github.com/TKaxv-7S/headscale/hscontrol/types.Version={{ .Version }}
+      - -X github.com/TKaxv-7S/headscale/hscontrol/types.GitCommitHash={{ .Commit }}
     tags:
       - ts2019
 
@@ -59,7 +59,7 @@ nfpms:
     priority: optional
     vendor: headscale
     maintainer: Kristoffer Dalby <kristoffer@dalby.cc>
-    homepage: https://github.com/juanfont/headscale
+    homepage: https://github.com/TKaxv-7S/headscale
     description: |-
       Open source implementation of the Tailscale control server.
       Headscale aims to implement a self-hosted, open source alternative to the

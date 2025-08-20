@@ -12,7 +12,7 @@ import (
 	"tailscale.com/util/set"
 )
 
-const MinSupportedCapabilityVersion tailcfg.CapabilityVersion = 90
+const MinSupportedCapabilityVersion tailcfg.CapabilityVersion = 51
 
 // CanOldCodeBeCleanedUp is intended to be called on startup to see if
 // there are old code that can ble cleaned up, entries should contain
