@@ -59,7 +59,6 @@ func (api headscaleV1APIServer) CreateUser(
 		return nil, status.Errorf(codes.Internal, "failed to create user: %s", err)
 	}
 
-
 	c := change.UserAdded(types.UserID(user.ID))
 	if policyChanged {
 		c.Change = change.Policy
@@ -451,44 +450,16 @@ func (api headscaleV1APIServer) ChangeIPv4AddressesNode(
 	ctx context.Context,
 	request *v1.ChangeIPAddressesNodeRequest,
 ) (*v1.ChangeIPAddressesNodeResponse, error) {
-	addresses := request.GetNewIpAddresses()
-	newIpAddresses, err := netip.ParseAddr(addresses)
-	if err != nil {
-		return nil, err
-	}
-	if newIpAddresses.Is6() {
-		return nil, err
-	}
-	node, err := db.Write(api.h.db.DB, func(tx *gorm.DB) (*types.Node, error) {
-		node, err := db.GetNodeByID(tx, types.NodeID(request.GetNodeId()))
-		if err != nil {
-			return nil, err
-		}
-		err = db.ChangeIPAddressesNode(
-			tx,
-			node,
-			api.h.ipAlloc,
-			newIpAddresses,
-		)
-		if err != nil {
-			return nil, err
-		}
-		return db.GetNodeByID(tx, types.NodeID(request.GetNodeId()))
-	})
+	node, nodeChange, err := api.h.state.ChangeIPv4AddressesNode(types.NodeID(request.GetNodeId()), request.GetNewIpAddresses())
 	if err != nil {
 		return nil, err
 	}
 
-	ctx = types.NotifyCtx(ctx, "cli-changeipv4addressesnode", node.Hostname)
-	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdate{
-		Type:        types.StatePeerChanged,
-		ChangeNodes: []types.NodeID{node.ID},
-		Message:     "called from api.ChangeIPv4AddressesNode",
-	}, node.ID)
+	api.h.Change(nodeChange)
 
 	log.Trace().
 		Str("node", node.Hostname).
-		Str("new_ipv4_addresses", addresses).
+		Str("new_ipv4_addresses", request.GetNewIpAddresses()).
 		Msg("node changed ipv4 addresses")
 
 	return &v1.ChangeIPAddressesNodeResponse{Node: node.Proto()}, nil
@@ -498,44 +469,16 @@ func (api headscaleV1APIServer) ChangeIPv6AddressesNode(
 	ctx context.Context,
 	request *v1.ChangeIPAddressesNodeRequest,
 ) (*v1.ChangeIPAddressesNodeResponse, error) {
-	addresses := request.GetNewIpAddresses()
-	newIpAddresses, err := netip.ParseAddr(addresses)
-	if err != nil {
-		return nil, err
-	}
-	if newIpAddresses.Is4() {
-		return nil, err
-	}
-	node, err := db.Write(api.h.db.DB, func(tx *gorm.DB) (*types.Node, error) {
-		node, err := db.GetNodeByID(tx, types.NodeID(request.GetNodeId()))
-		if err != nil {
-			return nil, err
-		}
-		err = db.ChangeIPAddressesNode(
-			tx,
-			node,
-			api.h.ipAlloc,
-			newIpAddresses,
-		)
-		if err != nil {
-			return nil, err
-		}
-		return db.GetNodeByID(tx, types.NodeID(request.GetNodeId()))
-	})
+	node, nodeChange, err := api.h.state.ChangeIPv6AddressesNode(types.NodeID(request.GetNodeId()), request.GetNewIpAddresses())
 	if err != nil {
 		return nil, err
 	}
 
-	ctx = types.NotifyCtx(ctx, "cli-changeipv6addressesnode", node.Hostname)
-	api.h.nodeNotifier.NotifyWithIgnore(ctx, types.StateUpdate{
-		Type:        types.StatePeerChanged,
-		ChangeNodes: []types.NodeID{node.ID},
-		Message:     "called from api.ChangeIPv6AddressesNode",
-	}, node.ID)
+	api.h.Change(nodeChange)
 
 	log.Trace().
 		Str("node", node.Hostname).
-		Str("new_ipv6_addresses", addresses).
+		Str("new_ipv6_addresses", request.GetNewIpAddresses()).
 		Msg("node changed ipv6 addresses")
 
 	return &v1.ChangeIPAddressesNodeResponse{Node: node.Proto()}, nil

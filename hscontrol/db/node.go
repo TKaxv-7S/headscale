@@ -299,13 +299,13 @@ func ChangeIPAddressesNode(tx *gorm.DB, node *types.Node, alloc *IPAllocator, ip
 	if ip.Is4() {
 		iPv4 := node.IPv4
 		if err := tx.Model(&types.Node{}).Where("id = ? AND ipv4 = ?", nodeID, iPv4.String()).Update("ipv4", ip.String()).Error; err != nil {
-			return fmt.Errorf("failed to change ip addresses node in the database: %w", err)
+			return fmt.Errorf("failed to change ipv4 addresses node in the database: %w", err)
 		}
 		usedIPs.Remove(*iPv4)
 	} else {
 		iPv6 := node.IPv6
 		if err := tx.Model(&types.Node{}).Where("id = ? AND ipv6 = ?", nodeID, iPv6.String()).Update("ipv6", ip.String()).Error; err != nil {
-			return fmt.Errorf("failed to change ip addresses node in the database: %w", err)
+			return fmt.Errorf("failed to change ipv6 addresses node in the database: %w", err)
 		}
 		usedIPs.Remove(*iPv6)
 	}
