@@ -159,6 +159,7 @@ func (i *IPAllocator) Next() (*netip.Addr, *netip.Addr, error) {
 }
 
 var ErrCouldNotAllocateIP = errors.New("failed to allocate IP")
+var ErrHasBeenUsedIP = errors.New("this IP has been used")
 
 func (i *IPAllocator) nextLocked(prev netip.Addr, prefix *netip.Prefix) (*netip.Addr, error) {
 	i.mu.Lock()
@@ -265,15 +266,15 @@ func (i *IPAllocator) IsAvailableIP(ip netip.Addr) (bool, error) {
 	}
 	if ip.Is4() {
 		if !i.prefix4.Contains(ip) {
-			return false, ErrCouldNotAllocateIP
+			return false, ErrHasBeenUsedIP
 		}
 	} else {
 		if !i.prefix6.Contains(ip) {
-			return false, ErrCouldNotAllocateIP
+			return false, ErrHasBeenUsedIP
 		}
 	}
-	if set.Contains(ip) {
-		return false, ErrCouldNotAllocateIP
+	if set.Contains(ip) || isTailscaleReservedIP(ip) {
+		return false, ErrHasBeenUsedIP
 	}
 	return true, nil
 }

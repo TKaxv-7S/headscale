@@ -587,7 +587,7 @@ func (s *State) ChangeIPv4AddressesNode(nodeID types.NodeID, newAddresses string
 		return nil, change.EmptySet, fmt.Errorf("change ipv4 addresses is ipv6")
 	}
 	n, c, err := s.updateNodeTx(nodeID, func(tx *gorm.DB) error {
-		node, err := s.GetNodeByID(nodeID)
+		node, err := hsdb.GetNodeByID(tx, nodeID)
 		if err != nil {
 			return err
 		}
@@ -613,7 +613,7 @@ func (s *State) ChangeIPv6AddressesNode(nodeID types.NodeID, newAddresses string
 		return nil, change.EmptySet, fmt.Errorf("change ipv6 addresses is ipv4")
 	}
 	n, c, err := s.updateNodeTx(nodeID, func(tx *gorm.DB) error {
-		node, err := s.GetNodeByID(nodeID)
+		node, err := hsdb.GetNodeByID(tx, nodeID)
 		if err != nil {
 			return err
 		}
