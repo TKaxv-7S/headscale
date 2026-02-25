@@ -41,17 +41,11 @@ func init() {
 	nodeCmd.AddCommand(renameNodeCmd)
 
 	changeIPv4AddressesNodeCmd.Flags().Uint64P("identifier", "i", 0, "Node identifier (ID)")
-	err = changeIPv4AddressesNodeCmd.MarkFlagRequired("identifier")
-	if err != nil {
-		log.Fatalf(err.Error())
-	}
+	mustMarkRequired(changeIPv4AddressesNodeCmd, "identifier")
 	nodeCmd.AddCommand(changeIPv4AddressesNodeCmd)
 
 	changeIPv6AddressesNodeCmd.Flags().Uint64P("identifier", "i", 0, "Node identifier (ID)")
-	err = changeIPv6AddressesNodeCmd.MarkFlagRequired("identifier")
-	if err != nil {
-		log.Fatalf(err.Error())
-	}
+	mustMarkRequired(changeIPv6AddressesNodeCmd, "identifier")
 	nodeCmd.AddCommand(changeIPv6AddressesNodeCmd)
 
 	deleteNodeCmd.Flags().Uint64P("identifier", "i", 0, "Node identifier (ID)")
@@ -242,28 +236,14 @@ var renameNodeCmd = &cobra.Command{
 var changeIPv4AddressesNodeCmd = &cobra.Command{
 	Use:   "changeipv4 IPV4_ADDRESSES",
 	Short: "Change a node ipv4 addresses in your network",
-	Run: func(cmd *cobra.Command, args []string) {
-		output, _ := cmd.Flags().GetString("output")
-
-		identifier, err := cmd.Flags().GetUint64("identifier")
-		if err != nil {
-			ErrorOutput(
-				err,
-				fmt.Sprintf("Error converting ID to integer: %s", err),
-				output,
-			)
-
-			return
-		}
-
-		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
-		defer cancel()
-		defer conn.Close()
+	RunE: grpcRunE(func(ctx context.Context, client v1.HeadscaleServiceClient, cmd *cobra.Command, args []string) error {
+		identifier, _ := cmd.Flags().GetUint64("identifier")
 
 		newIpAddresses := ""
 		if len(args) > 0 {
 			newIpAddresses = args[0]
 		}
+
 		request := &v1.ChangeIPAddressesNodeRequest{
 			NodeId:         identifier,
 			NewIpAddresses: newIpAddresses,
@@ -271,47 +251,24 @@ var changeIPv4AddressesNodeCmd = &cobra.Command{
 
 		response, err := client.ChangeIPv4AddressesNode(ctx, request)
 		if err != nil {
-			ErrorOutput(
-				err,
-				fmt.Sprintf(
-					"Cannot change node ipv4 addresses: %s\n",
-					status.Convert(err).Message(),
-				),
-				output,
-			)
-
-			return
+			return fmt.Errorf("Cannot change node ipv4 addresses: %w", err)
 		}
 
-		SuccessOutput(response.GetNode(), "IPv4 addresses changed", output)
-	},
+		return printOutput(cmd, response.GetNode(), "IPv4 addresses changed")
+	}),
 }
 
 var changeIPv6AddressesNodeCmd = &cobra.Command{
 	Use:   "changeipv6 IPV6_ADDRESSES",
 	Short: "Change a node ipv6 addresses in your network",
-	Run: func(cmd *cobra.Command, args []string) {
-		output, _ := cmd.Flags().GetString("output")
-
-		identifier, err := cmd.Flags().GetUint64("identifier")
-		if err != nil {
-			ErrorOutput(
-				err,
-				fmt.Sprintf("Error converting ID to integer: %s", err),
-				output,
-			)
-
-			return
-		}
-
-		ctx, client, conn, cancel := newHeadscaleCLIWithConfig()
-		defer cancel()
-		defer conn.Close()
+	RunE: grpcRunE(func(ctx context.Context, client v1.HeadscaleServiceClient, cmd *cobra.Command, args []string) error {
+		identifier, _ := cmd.Flags().GetUint64("identifier")
 
 		newIpAddresses := ""
 		if len(args) > 0 {
 			newIpAddresses = args[0]
 		}
+
 		request := &v1.ChangeIPAddressesNodeRequest{
 			NodeId:         identifier,
 			NewIpAddresses: newIpAddresses,
@@ -319,20 +276,11 @@ var changeIPv6AddressesNodeCmd = &cobra.Command{
 
 		response, err := client.ChangeIPv6AddressesNode(ctx, request)
 		if err != nil {
-			ErrorOutput(
-				err,
-				fmt.Sprintf(
-					"Cannot change node ipv6 addresses: %s\n",
-					status.Convert(err).Message(),
-				),
-				output,
-			)
-
-			return
+			return fmt.Errorf("Cannot change node ipv6 addresses: %w", err)
 		}
 
-		SuccessOutput(response.GetNode(), "IPv6 addresses renamed", output)
-	},
+		return printOutput(cmd, response.GetNode(), "IPv6 addresses changed")
+	}),
 }
 
 var deleteNodeCmd = &cobra.Command{

@@ -40,6 +40,7 @@ test_output/
 control_logs/
 
 # Nix build output
+nix_cache/
 result
 .direnv/
 

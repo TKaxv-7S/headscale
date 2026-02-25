@@ -31,6 +31,8 @@ const (
 	OldGivenName       = "old_given_name"
 	NewGivenName       = "new_given_name"
 	NewName            = "new_name"
+	NewIPv4Addresses   = "new_ipv4_addresses"
+	NewIPv6Addresses   = "new_ipv6_addresses"
 	GeneratedHostname  = "generated.hostname"
 	RegistrationKey    = "registration_key" //nolint:gosec // G101: not a credential
 	RegistrationMethod = "registrationMethod"

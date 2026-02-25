@@ -315,7 +315,7 @@ func RenameNode(tx *gorm.DB,
 	return nil
 }
 
-func ChangeIPAddressesNode(tx *gorm.DB, node *types.Node, alloc *IPAllocator, ip netip.Addr) error {
+/*func ChangeIPAddressesNode(tx *gorm.DB, node *types.Node, alloc *IPAllocator, ip netip.Addr) error {
 	nodeID := node.ID
 	usedIPs := alloc.usedIPs
 	isAvailable, err := alloc.IsAvailableIP(
@@ -339,7 +339,7 @@ func ChangeIPAddressesNode(tx *gorm.DB, node *types.Node, alloc *IPAllocator, ip
 	}
 	usedIPs.Add(ip)
 	return nil
-}
+}*/
 
 func (hsdb *HSDatabase) NodeSetExpiry(nodeID types.NodeID, expiry *time.Time) error {
 	return hsdb.Write(func(tx *gorm.DB) error {

@@ -389,3 +389,17 @@ func (i *IPAllocator) FreeIPs(ips []netip.Addr) {
 		i.usedIPs.Remove(ip)
 	}
 }
+
+func (i *IPAllocator) AddIP(ip netip.Addr) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.usedIPs.Add(ip)
+}
+
+func (i *IPAllocator) RemoveIP(ip netip.Addr) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+
+	i.usedIPs.Remove(ip)
+}

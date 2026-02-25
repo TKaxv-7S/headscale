@@ -534,8 +534,9 @@ func (api headscaleV1APIServer) ChangeIPv4AddressesNode(
 	api.h.Change(nodeChange)
 
 	log.Trace().
-		Str("node", node.Hostname).
-		Str("new_ipv4_addresses", request.GetNewIpAddresses()).
+		Caller().
+		EmbedObject(node).
+		Str(zf.NewIPv4Addresses, request.GetNewIpAddresses()).
 		Msg("node changed ipv4 addresses")
 
 	return &v1.ChangeIPAddressesNodeResponse{Node: node.Proto()}, nil
@@ -553,8 +554,9 @@ func (api headscaleV1APIServer) ChangeIPv6AddressesNode(
 	api.h.Change(nodeChange)
 
 	log.Trace().
-		Str("node", node.Hostname).
-		Str("new_ipv6_addresses", request.GetNewIpAddresses()).
+		Caller().
+		EmbedObject(node).
+		Str(zf.NewIPv6Addresses, request.GetNewIpAddresses()).
 		Msg("node changed ipv6 addresses")
 
 	return &v1.ChangeIPAddressesNodeResponse{Node: node.Proto()}, nil

@@ -799,56 +799,70 @@ func (s *State) RenameNode(nodeID types.NodeID, newName string) (types.NodeView,
 	return s.persistNodeToDB(n)
 }
 
-func (s *State) ChangeIPv4AddressesNode(nodeID types.NodeID, newAddresses string) (*types.Node, change.ChangeSet, error) {
+func (s *State) ChangeIPv4AddressesNode(nodeID types.NodeID, newAddresses string) (types.NodeView, change.Change, error) {
 	newIpAddresses, err := netip.ParseAddr(newAddresses)
 	if err != nil {
-		return nil, change.EmptySet, err
+		return types.NodeView{}, change.Change{}, err
 	}
 	if newIpAddresses.Is6() {
-		return nil, change.EmptySet, fmt.Errorf("change ipv4 addresses is ipv6")
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv4 addresses is ipv6")
 	}
-	n, c, err := s.updateNodeTx(nodeID, func(tx *gorm.DB) error {
-		node, err := hsdb.GetNodeByID(tx, nodeID)
-		if err != nil {
-			return err
+
+	alloc := s.ipAlloc
+	isAvailable, err := alloc.IsAvailableIP(
+		newIpAddresses,
+	)
+	if err != nil || isAvailable == false {
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv4 addresses node: %w", err)
+	}
+	n, ok := s.nodeStore.UpdateNode(nodeID, func(node *types.Node) {
+		if newIpAddresses.Is4() {
+			iPv4 := node.IPv4
+			alloc.RemoveIP(*iPv4)
+		} else {
+			iPv6 := node.IPv6
+			alloc.RemoveIP(*iPv6)
 		}
-		return hsdb.ChangeIPAddressesNode(tx, node, s.ipAlloc, newIpAddresses)
+		alloc.AddIP(newIpAddresses)
 	})
-	if err != nil {
-		return nil, change.EmptySet, fmt.Errorf("change ipv4 addresses node: %w", err)
+	if !ok {
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv4 addresses node: %w", err)
 	}
 
-	if !c.IsFull() {
-		c = change.NodeAdded(nodeID)
-	}
-
-	return n, c, nil
+	return s.persistNodeToDB(n)
 }
 
-func (s *State) ChangeIPv6AddressesNode(nodeID types.NodeID, newAddresses string) (*types.Node, change.ChangeSet, error) {
+func (s *State) ChangeIPv6AddressesNode(nodeID types.NodeID, newAddresses string) (types.NodeView, change.Change, error) {
 	newIpAddresses, err := netip.ParseAddr(newAddresses)
 	if err != nil {
-		return nil, change.EmptySet, err
+		return types.NodeView{}, change.Change{}, err
 	}
 	if newIpAddresses.Is4() {
-		return nil, change.EmptySet, fmt.Errorf("change ipv6 addresses is ipv4")
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv6 addresses is ipv4")
 	}
-	n, c, err := s.updateNodeTx(nodeID, func(tx *gorm.DB) error {
-		node, err := hsdb.GetNodeByID(tx, nodeID)
-		if err != nil {
-			return err
+
+	alloc := s.ipAlloc
+	isAvailable, err := alloc.IsAvailableIP(
+		newIpAddresses,
+	)
+	if err != nil || isAvailable == false {
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv6 addresses node: %w", err)
+	}
+	n, ok := s.nodeStore.UpdateNode(nodeID, func(node *types.Node) {
+		if newIpAddresses.Is4() {
+			iPv4 := node.IPv4
+			alloc.RemoveIP(*iPv4)
+		} else {
+			iPv6 := node.IPv6
+			alloc.RemoveIP(*iPv6)
 		}
-		return hsdb.ChangeIPAddressesNode(tx, node, s.ipAlloc, newIpAddresses)
+		alloc.AddIP(newIpAddresses)
 	})
-	if err != nil {
-		return nil, change.EmptySet, fmt.Errorf("change ipv6 addresses node: %w", err)
+	if !ok {
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv6 addresses node: %w", err)
 	}
 
-	if !c.IsFull() {
-		c = change.NodeAdded(nodeID)
-	}
-
-	return n, c, nil
+	return s.persistNodeToDB(n)
 }
 
 // BackfillNodeIPs assigns IP addresses to nodes that don't have them.

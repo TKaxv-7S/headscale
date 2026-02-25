@@ -25,7 +25,8 @@ const (
 	HeadscaleService_ListUsers_FullMethodName               = "/headscale.v1.HeadscaleService/ListUsers"
 	HeadscaleService_CreatePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/CreatePreAuthKey"
 	HeadscaleService_ExpirePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/ExpirePreAuthKey"
-	HeadscaleService_DeletePreAuthKey_FullMethodName  = "/headscale.v1.HeadscaleService/DeletePreAuthKey"HeadscaleService_ListPreAuthKeys_FullMethodName         = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
+	HeadscaleService_DeletePreAuthKey_FullMethodName        = "/headscale.v1.HeadscaleService/DeletePreAuthKey"
+	HeadscaleService_ListPreAuthKeys_FullMethodName         = "/headscale.v1.HeadscaleService/ListPreAuthKeys"
 	HeadscaleService_DebugCreateNode_FullMethodName         = "/headscale.v1.HeadscaleService/DebugCreateNode"
 	HeadscaleService_GetNode_FullMethodName                 = "/headscale.v1.HeadscaleService/GetNode"
 	HeadscaleService_SetTags_FullMethodName                 = "/headscale.v1.HeadscaleService/SetTags"
@@ -37,14 +38,14 @@ const (
 	HeadscaleService_ChangeIPv4AddressesNode_FullMethodName = "/headscale.v1.HeadscaleService/ChangeIPv4AddressesNode"
 	HeadscaleService_ChangeIPv6AddressesNode_FullMethodName = "/headscale.v1.HeadscaleService/ChangeIPv6AddressesNode"
 	HeadscaleService_ListNodes_FullMethodName               = "/headscale.v1.HeadscaleService/ListNodes"
-
 	HeadscaleService_BackfillNodeIPs_FullMethodName         = "/headscale.v1.HeadscaleService/BackfillNodeIPs"
 	HeadscaleService_CreateApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/CreateApiKey"
 	HeadscaleService_ExpireApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/ExpireApiKey"
 	HeadscaleService_ListApiKeys_FullMethodName             = "/headscale.v1.HeadscaleService/ListApiKeys"
 	HeadscaleService_DeleteApiKey_FullMethodName            = "/headscale.v1.HeadscaleService/DeleteApiKey"
 	HeadscaleService_GetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/GetPolicy"
-	HeadscaleService_SetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/SetPolicy"HeadscaleService_Health_FullMethodName            = "/headscale.v1.HeadscaleService/Health"
+	HeadscaleService_SetPolicy_FullMethodName               = "/headscale.v1.HeadscaleService/SetPolicy"
+	HeadscaleService_Health_FullMethodName                  = "/headscale.v1.HeadscaleService/Health"
 )
 
 // HeadscaleServiceClient is the client API for HeadscaleService service.
@@ -460,10 +461,10 @@ func (UnimplementedHeadscaleServiceServer) RenameNode(context.Context, *RenameNo
 	return nil, status.Error(codes.Unimplemented, "method RenameNode not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) ChangeIPv4AddressesNode(context.Context, *ChangeIPAddressesNodeRequest) (*ChangeIPAddressesNodeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ChangeIPv4AddressesNode not implemented")
+	return nil, status.Error(codes.Unimplemented, "method ChangeIPv4AddressesNode not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) ChangeIPv6AddressesNode(context.Context, *ChangeIPAddressesNodeRequest) (*ChangeIPAddressesNodeResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method ChangeIPv6AddressesNode not implemented")
+	return nil, status.Error(codes.Unimplemented, "method ChangeIPv6AddressesNode not implemented")
 }
 func (UnimplementedHeadscaleServiceServer) ListNodes(context.Context, *ListNodesRequest) (*ListNodesResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListNodes not implemented")

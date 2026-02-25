@@ -2051,7 +2051,8 @@ var (
 	pattern_HeadscaleService_ListUsers_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "user"}, ""))
 	pattern_HeadscaleService_CreatePreAuthKey_0        = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "preauthkey"}, ""))
 	pattern_HeadscaleService_ExpirePreAuthKey_0        = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "preauthkey", "expire"}, ""))
-	pattern_HeadscaleService_DeletePreAuthKey_0  = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "preauthkey"}, ""))pattern_HeadscaleService_ListPreAuthKeys_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "preauthkey"}, ""))
+	pattern_HeadscaleService_DeletePreAuthKey_0        = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "preauthkey"}, ""))
+	pattern_HeadscaleService_ListPreAuthKeys_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "preauthkey"}, ""))
 	pattern_HeadscaleService_DebugCreateNode_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "debug", "node"}, ""))
 	pattern_HeadscaleService_GetNode_0                 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"api", "v1", "node", "node_id"}, ""))
 	pattern_HeadscaleService_SetTags_0                 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "node", "node_id", "tags"}, ""))
@@ -2063,14 +2064,14 @@ var (
 	pattern_HeadscaleService_ChangeIPv4AddressesNode_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "node", "node_id", "changeipv4addresses"}, ""))
 	pattern_HeadscaleService_ChangeIPv6AddressesNode_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 2, 4}, []string{"api", "v1", "node", "node_id", "changeipv6addresses"}, ""))
 	pattern_HeadscaleService_ListNodes_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "node"}, ""))
-
 	pattern_HeadscaleService_BackfillNodeIPs_0         = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "node", "backfillips"}, ""))
 	pattern_HeadscaleService_CreateApiKey_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "apikey"}, ""))
 	pattern_HeadscaleService_ExpireApiKey_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 2, 3}, []string{"api", "v1", "apikey", "expire"}, ""))
 	pattern_HeadscaleService_ListApiKeys_0             = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "apikey"}, ""))
 	pattern_HeadscaleService_DeleteApiKey_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"api", "v1", "apikey", "prefix"}, ""))
 	pattern_HeadscaleService_GetPolicy_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "policy"}, ""))
-	pattern_HeadscaleService_SetPolicy_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "policy"}, ""))pattern_HeadscaleService_Health_0            = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "health"}, ""))
+	pattern_HeadscaleService_SetPolicy_0               = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "policy"}, ""))
+	pattern_HeadscaleService_Health_0                  = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 2}, []string{"api", "v1", "health"}, ""))
 )
 
 var (
@@ -2080,7 +2081,8 @@ var (
 	forward_HeadscaleService_ListUsers_0               = runtime.ForwardResponseMessage
 	forward_HeadscaleService_CreatePreAuthKey_0        = runtime.ForwardResponseMessage
 	forward_HeadscaleService_ExpirePreAuthKey_0        = runtime.ForwardResponseMessage
-	forward_HeadscaleService_DeletePreAuthKey_0  = runtime.ForwardResponseMessageforward_HeadscaleService_ListPreAuthKeys_0         = runtime.ForwardResponseMessage
+	forward_HeadscaleService_DeletePreAuthKey_0        = runtime.ForwardResponseMessage
+	forward_HeadscaleService_ListPreAuthKeys_0         = runtime.ForwardResponseMessage
 	forward_HeadscaleService_DebugCreateNode_0         = runtime.ForwardResponseMessage
 	forward_HeadscaleService_GetNode_0                 = runtime.ForwardResponseMessage
 	forward_HeadscaleService_SetTags_0                 = runtime.ForwardResponseMessage
@@ -2092,12 +2094,12 @@ var (
 	forward_HeadscaleService_ChangeIPv4AddressesNode_0 = runtime.ForwardResponseMessage
 	forward_HeadscaleService_ChangeIPv6AddressesNode_0 = runtime.ForwardResponseMessage
 	forward_HeadscaleService_ListNodes_0               = runtime.ForwardResponseMessage
-
 	forward_HeadscaleService_BackfillNodeIPs_0         = runtime.ForwardResponseMessage
 	forward_HeadscaleService_CreateApiKey_0            = runtime.ForwardResponseMessage
 	forward_HeadscaleService_ExpireApiKey_0            = runtime.ForwardResponseMessage
 	forward_HeadscaleService_ListApiKeys_0             = runtime.ForwardResponseMessage
 	forward_HeadscaleService_DeleteApiKey_0            = runtime.ForwardResponseMessage
 	forward_HeadscaleService_GetPolicy_0               = runtime.ForwardResponseMessage
-	forward_HeadscaleService_SetPolicy_0               = runtime.ForwardResponseMessageforward_HeadscaleService_Health_0            = runtime.ForwardResponseMessage
+	forward_HeadscaleService_SetPolicy_0               = runtime.ForwardResponseMessage
+	forward_HeadscaleService_Health_0                  = runtime.ForwardResponseMessage
 )
