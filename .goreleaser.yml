@@ -2,12 +2,16 @@
 version: 2
 before:
   hooks:
-    - go mod tidy -compat=1.24
+    - go mod tidy -compat=1.26
     - go mod vendor
 
 release:
   prerelease: auto
   draft: true
+  header: |
+    ## Upgrade
+
+    Please follow the steps outlined in the [upgrade guide](https://headscale.net/stable/setup/upgrade/) to update your existing Headscale installation.
 
 builds:
   - id: headscale
@@ -23,10 +27,6 @@ builds:
       - linux_arm64
     flags:
       - -mod=readonly
-    ldflags:
-      - -s -w
-      - -X github.com/TKaxv-7S/headscale/hscontrol/types.Version={{ .Version }}
-      - -X github.com/TKaxv-7S/headscale/hscontrol/types.GitCommitHash={{ .Commit }}
     tags:
       - ts2019
 
@@ -102,7 +102,7 @@ kos:
     # bare tells KO to only use the repository
     # for tagging and naming the container.
     bare: true
-    base_image: gcr.io/distroless/base-debian12
+    base_image: gcr.io/distroless/base-debian13
     build: headscale
     main: ./cmd/headscale
     env:
@@ -122,6 +122,8 @@ kos:
       - "{{ .Tag }}"
       - '{{ trimprefix .Tag "v" }}'
       - "sha-{{ .ShortCommit }}"
+    creation_time: "{{.CommitTimestamp}}"
+    ko_data_creation_time: "{{.CommitTimestamp}}"
 
   - id: ghcr-debug
     repositories:
@@ -129,7 +131,7 @@ kos:
       - tkaxv7s/headscale
 
     bare: true
-    base_image: gcr.io/distroless/base-debian12:debug
+    base_image: gcr.io/distroless/base-debian13:debug
     build: headscale
     main: ./cmd/headscale
     env:

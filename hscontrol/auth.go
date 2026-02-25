@@ -1,6 +1,7 @@
 package hscontrol
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -10,73 +11,118 @@ import (
 	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
-	"github.com/juanfont/headscale/hscontrol/types/change"
+	"github.com/juanfont/headscale/hscontrol/util"
 	"github.com/rs/zerolog/log"
-
 	"gorm.io/gorm"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
-	"tailscale.com/types/ptr"
 )
 
 type AuthProvider interface {
-	RegisterHandler(http.ResponseWriter, *http.Request)
-	AuthURL(types.RegistrationID) string
+	RegisterHandler(w http.ResponseWriter, r *http.Request)
+	AuthURL(regID types.RegistrationID) string
 }
 
 func (h *Headscale) handleRegister(
 	ctx context.Context,
-	regReq tailcfg.RegisterRequest,
+	req tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
 ) (*tailcfg.RegisterResponse, error) {
-	node, err := h.state.GetNodeByNodeKey(regReq.NodeKey)
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("looking up node in database: %w", err)
-	}
+	// Check for logout/expiry FIRST, before checking auth key.
+	// Tailscale clients may send logout requests with BOTH a past expiry AND an auth key.
+	// A past expiry takes precedence - it's a logout regardless of other fields.
+	if !req.Expiry.IsZero() && req.Expiry.Before(time.Now()) {
+		log.Debug().
+			Str("node.key", req.NodeKey.ShortString()).
+			Time("expiry", req.Expiry).
+			Bool("has_auth", req.Auth != nil).
+			Msg("Detected logout attempt with past expiry")
 
-	if node != nil {
-		// If an existing node is trying to register with an auth key,
-		// we need to validate the auth key even for existing nodes
-		if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
-			resp, err := h.handleRegisterWithAuthKey(regReq, machineKey)
+		// This is a logout attempt (expiry in the past)
+		if node, ok := h.state.GetNodeByNodeKey(req.NodeKey); ok {
+			log.Debug().
+				EmbedObject(node).
+				Bool("is_ephemeral", node.IsEphemeral()).
+				Bool("has_authkey", node.AuthKey().Valid()).
+				Msg("Found existing node for logout, calling handleLogout")
+
+			resp, err := h.handleLogout(node, req, machineKey)
 			if err != nil {
-				// Preserve HTTPError types so they can be handled properly by the HTTP layer
-				var httpErr HTTPError
-				if errors.As(err, &httpErr) {
-					return nil, httpErr
-				}
-				return nil, fmt.Errorf("handling register with auth key for existing node: %w", err)
+				return nil, fmt.Errorf("handling logout: %w", err)
 			}
-			return resp, nil
-		}
 
-		resp, err := h.handleExistingNode(node, regReq, machineKey)
-		if err != nil {
-			return nil, fmt.Errorf("handling existing node: %w", err)
+			if resp != nil {
+				return resp, nil
+			}
+		} else {
+			log.Warn().
+				Str("node.key", req.NodeKey.ShortString()).
+				Msg("Logout attempt but node not found in NodeStore")
 		}
-
-		return resp, nil
 	}
 
-	if regReq.Followup != "" {
-		return h.waitForFollowup(ctx, regReq)
+	// If the register request does not contain a Auth struct, it means we are logging
+	// out an existing node (legacy logout path for clients that send Auth=nil).
+	if req.Auth == nil {
+		// If the register request present a NodeKey that is currently in use, we will
+		// check if the node needs to be sent to re-auth, or if the node is logging out.
+		// We do not look up nodes by [key.MachinePublic] as it might belong to multiple
+		// nodes, separated by users and this path is handling expiring/logout paths.
+		if node, ok := h.state.GetNodeByNodeKey(req.NodeKey); ok {
+			// When tailscaled restarts, it sends RegisterRequest with Auth=nil and Expiry=zero.
+			// Return the current node state without modification.
+			// See: https://github.com/juanfont/headscale/issues/2862
+			if req.Expiry.IsZero() && node.Expiry().Valid() && !node.IsExpired() {
+				return nodeToRegisterResponse(node), nil
+			}
+
+			resp, err := h.handleLogout(node, req, machineKey)
+			if err != nil {
+				return nil, fmt.Errorf("handling existing node: %w", err)
+			}
+
+			// If resp is not nil, we have a response to return to the node.
+			// If resp is nil, we should proceed and see if the node is trying to re-auth.
+			if resp != nil {
+				return resp, nil
+			}
+		} else {
+			// If the register request is not attempting to register a node, and
+			// we cannot match it with an existing node, we consider that unexpected
+			// as only register nodes should attempt to log out.
+			log.Debug().
+				Str("node.key", req.NodeKey.ShortString()).
+				Str("machine.key", machineKey.ShortString()).
+				Bool("unexpected", true).
+				Msg("received register request with no auth, and no existing node")
+		}
 	}
 
-	if regReq.Auth != nil && regReq.Auth.AuthKey != "" {
-		resp, err := h.handleRegisterWithAuthKey(regReq, machineKey)
+	// If the [tailcfg.RegisterRequest] has a Followup URL, it means that the
+	// node has already started the registration process and we should wait for
+	// it to finish the original registration.
+	if req.Followup != "" {
+		return h.waitForFollowup(ctx, req, machineKey)
+	}
+
+	// Pre authenticated keys are handled slightly different than interactive
+	// logins as they can be done fully sync and we can respond to the node with
+	// the result as it is waiting.
+	if isAuthKey(req) {
+		resp, err := h.handleRegisterWithAuthKey(req, machineKey)
 		if err != nil {
 			// Preserve HTTPError types so they can be handled properly by the HTTP layer
-			var httpErr HTTPError
-			if errors.As(err, &httpErr) {
+			if httpErr, ok := errors.AsType[HTTPError](err); ok {
 				return nil, httpErr
 			}
+
 			return nil, fmt.Errorf("handling register with auth key: %w", err)
 		}
 
 		return resp, nil
 	}
 
-	resp, err := h.handleRegisterInteractive(regReq, machineKey)
+	resp, err := h.handleRegisterInteractive(req, machineKey)
 	if err != nil {
 		return nil, fmt.Errorf("handling register interactive: %w", err)
 	}
@@ -84,57 +130,108 @@ func (h *Headscale) handleRegister(
 	return resp, nil
 }
 
-func (h *Headscale) handleExistingNode(
-	node *types.Node,
-	regReq tailcfg.RegisterRequest,
+// handleLogout checks if the [tailcfg.RegisterRequest] is a
+// logout attempt from a node. If the node is not attempting to.
+func (h *Headscale) handleLogout(
+	node types.NodeView,
+	req tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
 ) (*tailcfg.RegisterResponse, error) {
-
-	if node.MachineKey != machineKey {
+	// Fail closed if it looks like this is an attempt to modify a node where
+	// the node key and the machine key the noise session was started with does
+	// not align.
+	if node.MachineKey() != machineKey {
 		return nil, NewHTTPError(http.StatusUnauthorized, "node exist with different machine key", nil)
 	}
 
-	expired := node.IsExpired()
+	// Note: We do NOT return early if req.Auth is set, because Tailscale clients
+	// may send logout requests with BOTH a past expiry AND an auth key.
+	// A past expiry indicates logout, regardless of whether Auth is present.
+	// The expiry check below will handle the logout logic.
 
-	if !expired && !regReq.Expiry.IsZero() {
-		requestExpiry := regReq.Expiry
+	// If the node is expired and this is not a re-authentication attempt,
+	// force the client to re-authenticate.
+	// TODO(kradalby): I wonder if this is a path we ever hit?
+	if node.IsExpired() {
+		log.Trace().
+			EmbedObject(node).
+			Interface("reg.req", req).
+			Bool("unexpected", true).
+			Msg("Node key expired, forcing re-authentication")
 
-		// The client is trying to extend their key, this is not allowed.
-		if requestExpiry.After(time.Now()) {
-			return nil, NewHTTPError(http.StatusBadRequest, "extending key is not allowed", nil)
-		}
+		return &tailcfg.RegisterResponse{
+			NodeKeyExpired:    true,
+			MachineAuthorized: false,
+			AuthURL:           "", // Client will need to re-authenticate
+		}, nil
+	}
 
-		// If the request expiry is in the past, we consider it a logout.
-		if requestExpiry.Before(time.Now()) {
-			if node.IsEphemeral() {
-				c, err := h.state.DeleteNode(node)
-				if err != nil {
-					return nil, fmt.Errorf("deleting ephemeral node: %w", err)
-				}
+	// If we get here, the node is not currently expired, and not trying to
+	// do an auth.
+	// The node is likely logging out, but before we run that logic, we will validate
+	// that the node is not attempting to tamper/extend their expiry.
+	// If it is not, we will expire the node or in the case of an ephemeral node, delete it.
 
-				h.Change(c)
+	// The client is trying to extend their key, this is not allowed.
+	if req.Expiry.After(time.Now()) {
+		return nil, NewHTTPError(http.StatusBadRequest, "extending key is not allowed", nil)
+	}
 
-				return nil, nil
+	// If the request expiry is in the past, we consider it a logout.
+	// Zero expiry is handled in handleRegister() before calling this function.
+	if req.Expiry.Before(time.Now()) {
+		log.Debug().
+			EmbedObject(node).
+			Bool("is_ephemeral", node.IsEphemeral()).
+			Bool("has_authkey", node.AuthKey().Valid()).
+			Time("req.expiry", req.Expiry).
+			Msg("Processing logout request with past expiry")
+
+		if node.IsEphemeral() {
+			log.Info().
+				EmbedObject(node).
+				Msg("Deleting ephemeral node during logout")
+
+			c, err := h.state.DeleteNode(node)
+			if err != nil {
+				return nil, fmt.Errorf("deleting ephemeral node: %w", err)
 			}
+
+			h.Change(c)
+
+			return &tailcfg.RegisterResponse{
+				NodeKeyExpired:    true,
+				MachineAuthorized: false,
+			}, nil
 		}
 
-		_, c, err := h.state.SetNodeExpiry(node.ID, requestExpiry)
-		if err != nil {
-			return nil, fmt.Errorf("setting node expiry: %w", err)
-		}
+		log.Debug().
+			EmbedObject(node).
+			Msg("Node is not ephemeral, setting expiry instead of deleting")
+	}
 
-		h.Change(c)
-		}
+	// Update the internal state with the nodes new expiry, meaning it is
+	// logged out.
+	expiry := req.Expiry
 
-		return nodeToRegisterResponse(node), nil
+	updatedNode, c, err := h.state.SetNodeExpiry(node.ID(), &expiry)
+	if err != nil {
+		return nil, fmt.Errorf("setting node expiry: %w", err)
+	}
+
+	h.Change(c)
+
+	return nodeToRegisterResponse(updatedNode), nil
 }
 
-func nodeToRegisterResponse(node *types.Node) *tailcfg.RegisterResponse {
-	return &tailcfg.RegisterResponse{
-		// TODO(kradalby): Only send for user-owned nodes
-		// and not tagged nodes when tags is working.
-		User:           *node.User.TailscaleUser(),
-		Login:          *node.User.TailscaleLogin(),
+// isAuthKey reports if the register request is a registration request
+// using an pre auth key.
+func isAuthKey(req tailcfg.RegisterRequest) bool {
+	return req.Auth != nil && req.Auth.AuthKey != ""
+}
+
+func nodeToRegisterResponse(node types.NodeView) *tailcfg.RegisterResponse {
+	resp := &tailcfg.RegisterResponse{
 		NodeKeyExpired: node.IsExpired(),
 
 		// Headscale does not implement the concept of machine authorization
@@ -142,13 +239,26 @@ func nodeToRegisterResponse(node *types.Node) *tailcfg.RegisterResponse {
 		// Revisit this if #2176 gets implemented.
 		MachineAuthorized: true,
 	}
+
+	// For tagged nodes, use the TaggedDevices special user
+	// For user-owned nodes, include User and Login information from the actual user
+	if node.IsTagged() {
+		resp.User = types.TaggedDevices.View().TailscaleUser()
+		resp.Login = types.TaggedDevices.View().TailscaleLogin()
+	} else if node.Owner().Valid() {
+		resp.User = node.Owner().TailscaleUser()
+		resp.Login = node.Owner().TailscaleLogin()
+	}
+
+	return resp
 }
 
 func (h *Headscale) waitForFollowup(
 	ctx context.Context,
-	regReq tailcfg.RegisterRequest,
+	req tailcfg.RegisterRequest,
+	machineKey key.MachinePublic,
 ) (*tailcfg.RegisterResponse, error) {
-	fu, err := url.Parse(regReq.Followup)
+	fu, err := url.Parse(req.Followup)
 	if err != nil {
 		return nil, NewHTTPError(http.StatusUnauthorized, "invalid followup URL", err)
 	}
@@ -164,39 +274,87 @@ func (h *Headscale) waitForFollowup(
 			return nil, NewHTTPError(http.StatusUnauthorized, "registration timed out", err)
 		case node := <-reg.Registered:
 			if node == nil {
-				return nil, NewHTTPError(http.StatusUnauthorized, "node not found", nil)
+				// registration is expired in the cache, instruct the client to try a new registration
+				return h.reqToNewRegisterResponse(req, machineKey)
 			}
-			return nodeToRegisterResponse(node), nil
+
+			return nodeToRegisterResponse(node.View()), nil
 		}
 	}
 
-	return nil, NewHTTPError(http.StatusNotFound, "followup registration not found", nil)
+	// if the follow-up registration isn't found anymore, instruct the client to try a new registration
+	return h.reqToNewRegisterResponse(req, machineKey)
+}
+
+// reqToNewRegisterResponse refreshes the registration flow by creating a new
+// registration ID and returning the corresponding AuthURL so the client can
+// restart the authentication process.
+func (h *Headscale) reqToNewRegisterResponse(
+	req tailcfg.RegisterRequest,
+	machineKey key.MachinePublic,
+) (*tailcfg.RegisterResponse, error) {
+	newRegID, err := types.NewRegistrationID()
+	if err != nil {
+		return nil, NewHTTPError(http.StatusInternalServerError, "failed to generate registration ID", err)
+	}
+
+	// Ensure we have a valid hostname
+	hostname := util.EnsureHostname(
+		req.Hostinfo,
+		machineKey.String(),
+		req.NodeKey.String(),
+	)
+
+	// Ensure we have valid hostinfo
+	hostinfo := cmp.Or(req.Hostinfo, &tailcfg.Hostinfo{})
+	hostinfo.Hostname = hostname
+
+	nodeToRegister := types.NewRegisterNode(
+		types.Node{
+			Hostname:   hostname,
+			MachineKey: machineKey,
+			NodeKey:    req.NodeKey,
+			Hostinfo:   hostinfo,
+			LastSeen:   new(time.Now()),
+		},
+	)
+
+	if !req.Expiry.IsZero() {
+		nodeToRegister.Node.Expiry = &req.Expiry
+	}
+
+	log.Info().Msgf("new followup node registration using key: %s", newRegID)
+	h.state.SetRegistrationCacheEntry(newRegID, nodeToRegister)
+
+	return &tailcfg.RegisterResponse{
+		AuthURL: h.authProvider.AuthURL(newRegID),
+	}, nil
 }
 
 func (h *Headscale) handleRegisterWithAuthKey(
-	regReq tailcfg.RegisterRequest,
+	req tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
 ) (*tailcfg.RegisterResponse, error) {
-	node, changed, policyChanged, err := h.state.HandleNodeFromPreAuthKey(
-		regReq,
+	node, changed, err := h.state.HandleNodeFromPreAuthKey(
+		req,
 		machineKey,
 	)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, NewHTTPError(http.StatusUnauthorized, "invalid pre auth key", nil)
 		}
-		var perr types.PAKError
-		if errors.As(err, &perr) {
+
+		if perr, ok := errors.AsType[types.PAKError](err); ok {
 			return nil, NewHTTPError(http.StatusUnauthorized, perr.Error(), nil)
 		}
 
 		return nil, err
 	}
 
-	// If node is nil, it means an ephemeral node was deleted during logout
-	if node == nil {
+	// If node is not valid, it means an ephemeral node was deleted during logout
+	if !node.Valid() {
 		h.Change(changed)
-		return nil, nil
+		return nil, nil //nolint:nilnil // intentional: no node to return when ephemeral deleted
 	}
 
 	// This is a bit of a back and forth, but we have a bit of a chicken and egg
@@ -212,32 +370,40 @@ func (h *Headscale) handleRegisterWithAuthKey(
 	// eventbus.
 	// TODO(kradalby): This needs to be ran as part of the batcher maybe?
 	// now since we dont update the node/pol here anymore
-	routeChange := h.state.AutoApproveRoutes(node)
-	if _, _, err := h.state.SaveNode(node); err != nil {
-		return nil, fmt.Errorf("saving auto approved routes to node: %w", err)
+	routesChange, err := h.state.AutoApproveRoutes(node)
+	if err != nil {
+		return nil, fmt.Errorf("auto approving routes: %w", err)
 	}
 
-	if routeChange && changed.Empty() {
-		changed = change.NodeAdded(node.ID)
-	}
-	h.Change(changed)
+	// Send both changes. Empty changes are ignored by Change().
+	h.Change(changed, routesChange)
 
-	// If policy changed due to node registration, send a separate policy change
-	if policyChanged {
-		policyChange := change.PolicyChange()
-		h.Change(policyChange)
-	}
+	// TODO(kradalby): I think this is covered above, but we need to validate that.
+	// // If policy changed due to node registration, send a separate policy change
+	// if policyChanged {
+	// 	policyChange := change.PolicyChange()
+	// 	h.Change(policyChange)
+	// }
 
-	return &tailcfg.RegisterResponse{
+	resp := &tailcfg.RegisterResponse{
 		MachineAuthorized: true,
 		NodeKeyExpired:    node.IsExpired(),
-		User:              *node.User.TailscaleUser(),
-		Login:             *node.User.TailscaleLogin(),
-	}, nil
+		User:              node.Owner().TailscaleUser(),
+		Login:             node.Owner().TailscaleLogin(),
+	}
+
+	log.Trace().
+		Caller().
+		Interface("reg.resp", resp).
+		Interface("reg.req", req).
+		EmbedObject(node).
+		Msg("RegisterResponse")
+
+	return resp, nil
 }
 
 func (h *Headscale) handleRegisterInteractive(
-	regReq tailcfg.RegisterRequest,
+	req tailcfg.RegisterRequest,
 	machineKey key.MachinePublic,
 ) (*tailcfg.RegisterResponse, error) {
 	registrationId, err := types.NewRegistrationID()
@@ -245,19 +411,43 @@ func (h *Headscale) handleRegisterInteractive(
 		return nil, fmt.Errorf("generating registration ID: %w", err)
 	}
 
-	nodeToRegister := types.RegisterNode{
-		Node: types.Node{
-			Hostname:   regReq.Hostinfo.Hostname,
-			MachineKey: machineKey,
-			NodeKey:    regReq.NodeKey,
-			Hostinfo:   regReq.Hostinfo,
-			LastSeen:   ptr.To(time.Now()),
-		},
-		Registered: make(chan *types.Node),
+	// Ensure we have a valid hostname
+	hostname := util.EnsureHostname(
+		req.Hostinfo,
+		machineKey.String(),
+		req.NodeKey.String(),
+	)
+
+	// Ensure we have valid hostinfo
+	hostinfo := cmp.Or(req.Hostinfo, &tailcfg.Hostinfo{})
+	if req.Hostinfo == nil {
+		log.Warn().
+			Str("machine.key", machineKey.ShortString()).
+			Str("node.key", req.NodeKey.ShortString()).
+			Str("generated.hostname", hostname).
+			Msg("Received registration request with nil hostinfo, generated default hostname")
+	} else if req.Hostinfo.Hostname == "" {
+		log.Warn().
+			Str("machine.key", machineKey.ShortString()).
+			Str("node.key", req.NodeKey.ShortString()).
+			Str("generated.hostname", hostname).
+			Msg("Received registration request with empty hostname, generated default")
 	}
 
-	if !regReq.Expiry.IsZero() {
-		nodeToRegister.Node.Expiry = &regReq.Expiry
+	hostinfo.Hostname = hostname
+
+	nodeToRegister := types.NewRegisterNode(
+		types.Node{
+			Hostname:   hostname,
+			MachineKey: machineKey,
+			NodeKey:    req.NodeKey,
+			Hostinfo:   hostinfo,
+			LastSeen:   new(time.Now()),
+		},
+	)
+
+	if !req.Expiry.IsZero() {
+		nodeToRegister.Node.Expiry = &req.Expiry
 	}
 
 	h.state.SetRegistrationCacheEntry(
@@ -265,7 +455,8 @@ func (h *Headscale) handleRegisterInteractive(
 		nodeToRegister,
 	)
 
-	log.Info().Msgf("Starting node registration using key: %s", registrationId)
+	log.Info().Msgf("starting node registration using key: %s", registrationId)
+
 	return &tailcfg.RegisterResponse{
 		AuthURL: h.authProvider.AuthURL(registrationId),
 	}, nil

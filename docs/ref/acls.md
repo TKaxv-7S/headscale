@@ -65,7 +65,7 @@ servers.
 - billing.internal
 - router.internal
 
-![ACL implementation example](../images/headscale-acl-network.png)
+![ACL implementation example](../assets/images/headscale-acl-network.png)
 
 When [registering the servers](../usage/getting-started.md#register-a-node) we
 will need to add the flag `--advertise-tags=tag:<tag1>,tag:<tag2>`, and the user
@@ -194,13 +194,93 @@ Here are the ACL's to implement the same permissions as above:
       "dst": ["tag:dev-app-servers:80,443"]
     },
 
-    // We still have to allow internal users communications since nothing guarantees that each user have
-    // their own users.
-    { "action": "accept", "src": ["boss@"], "dst": ["boss@:*"] },
-    { "action": "accept", "src": ["dev1@"], "dst": ["dev1@:*"] },
-    { "action": "accept", "src": ["dev2@"], "dst": ["dev2@:*"] },
-    { "action": "accept", "src": ["admin1@"], "dst": ["admin1@:*"] },
-    { "action": "accept", "src": ["intern1@"], "dst": ["intern1@:*"] }
+    // Allow users to access their own devices using autogroup:self (see below for more details about performance impact)
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["autogroup:self:*"]
+    }
   ]
+}
+```
+
+## Autogroups
+
+Headscale supports several autogroups that automatically include users, destinations, or devices with specific properties. Autogroups provide a convenient way to write ACL rules without manually listing individual users or devices.
+
+### `autogroup:internet`
+
+Allows access to the internet through [exit nodes](routes.md#exit-node). Can only be used in ACL destinations.
+
+```json
+{
+  "action": "accept",
+  "src": ["group:users"],
+  "dst": ["autogroup:internet:*"]
+}
+```
+
+### `autogroup:member`
+
+Includes all [personal (untagged) devices](registration.md/#identity-model).
+
+```json
+{
+  "action": "accept",
+  "src": ["autogroup:member"],
+  "dst": ["tag:prod-app-servers:80,443"]
+}
+```
+
+### `autogroup:tagged`
+
+Includes all devices that [have at least one tag](registration.md/#identity-model).
+
+```json
+{
+  "action": "accept",
+  "src": ["autogroup:tagged"],
+  "dst": ["tag:monitoring:9090"]
+}
+```
+
+### `autogroup:self`
+
+!!! warning "The current implementation of `autogroup:self` is inefficient"
+
+Includes devices where the same user is authenticated on both the source and destination. Does not include tagged devices. Can only be used in ACL destinations.
+
+```json
+{
+  "action": "accept",
+  "src": ["autogroup:member"],
+  "dst": ["autogroup:self:*"]
+}
+```
+*Using `autogroup:self` may cause performance degradation on the Headscale coordinator server in large deployments, as filter rules must be compiled per-node rather than globally and the current implementation is not very efficient.*
+
+If you experience performance issues, consider using more specific ACL rules or limiting the use of `autogroup:self`.
+```json
+{
+  // The following rules allow internal users to communicate with their
+  // own nodes in case autogroup:self is causing performance issues.
+  { "action": "accept", "src": ["boss@"], "dst": ["boss@:*"] },
+  { "action": "accept", "src": ["dev1@"], "dst": ["dev1@:*"] },
+  { "action": "accept", "src": ["dev2@"], "dst": ["dev2@:*"] },
+  { "action": "accept", "src": ["admin1@"], "dst": ["admin1@:*"] },
+  { "action": "accept", "src": ["intern1@"], "dst": ["intern1@:*"] }
+}
+```
+
+### `autogroup:nonroot`
+
+Used in Tailscale SSH rules to allow access to any user except root. Can only be used in the `users` field of SSH rules.
+
+```json
+{
+  "action": "accept",
+  "src": ["autogroup:member"],
+  "dst": ["autogroup:self"],
+  "users": ["autogroup:nonroot"]
 }
 ```

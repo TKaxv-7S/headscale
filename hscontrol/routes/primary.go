@@ -10,6 +10,8 @@ import (
 
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/juanfont/headscale/hscontrol/util/zlog/zf"
+	"github.com/rs/zerolog/log"
 	xmaps "golang.org/x/exp/maps"
 	"tailscale.com/net/tsaddr"
 	"tailscale.com/util/set"
@@ -45,6 +47,8 @@ func New() *PrimaryRoutes {
 // 4. If the primary routes have changed, update the internal state and return true.
 // 5. Otherwise, return false.
 func (pr *PrimaryRoutes) updatePrimaryLocked() bool {
+	log.Debug().Caller().Msg("updatePrimaryLocked starting")
+
 	// reset the primaries map, as we are going to recalculate it.
 	allPrimaries := make(map[netip.Prefix][]types.NodeID)
 	pr.isPrimary = make(map[types.NodeID]bool)
@@ -74,22 +78,59 @@ func (pr *PrimaryRoutes) updatePrimaryLocked() bool {
 	// If the current primary is still available, continue.
 	// If the current primary is not available, select a new one.
 	for prefix, nodes := range allPrimaries {
+		log.Debug().
+			Caller().
+			Str(zf.Prefix, prefix.String()).
+			Uints64("availableNodes", func() []uint64 {
+				ids := make([]uint64, len(nodes))
+				for i, id := range nodes {
+					ids[i] = id.Uint64()
+				}
+
+				return ids
+			}()).
+			Msg("processing prefix for primary route selection")
+
 		if node, ok := pr.primaries[prefix]; ok {
 			// If the current primary is still available, continue.
 			if slices.Contains(nodes, node) {
+				log.Debug().
+					Caller().
+					Str(zf.Prefix, prefix.String()).
+					Uint64("currentPrimary", node.Uint64()).
+					Msg("current primary still available, keeping it")
+
 				continue
+			} else {
+				log.Debug().
+					Caller().
+					Str(zf.Prefix, prefix.String()).
+					Uint64("oldPrimary", node.Uint64()).
+					Msg("current primary no longer available")
 			}
 		}
+
 		if len(nodes) >= 1 {
 			pr.primaries[prefix] = nodes[0]
 			changed = true
+
+			log.Debug().
+				Caller().
+				Str(zf.Prefix, prefix.String()).
+				Uint64("newPrimary", nodes[0].Uint64()).
+				Msg("selected new primary for prefix")
 		}
 	}
 
 	// Clean up any remaining primaries that are no longer valid.
 	for prefix := range pr.primaries {
 		if _, ok := allPrimaries[prefix]; !ok {
+			log.Debug().
+				Caller().
+				Str(zf.Prefix, prefix.String()).
+				Msg("cleaning up primary route that no longer has available nodes")
 			delete(pr.primaries, prefix)
+
 			changed = true
 		}
 	}
@@ -98,6 +139,12 @@ func (pr *PrimaryRoutes) updatePrimaryLocked() bool {
 	for _, nodeID := range pr.primaries {
 		pr.isPrimary[nodeID] = true
 	}
+
+	log.Debug().
+		Caller().
+		Bool(zf.Changes, changed).
+		Str(zf.FinalState, pr.stringLocked()).
+		Msg("updatePrimaryLocked completed")
 
 	return changed
 }
@@ -110,14 +157,36 @@ func (pr *PrimaryRoutes) SetRoutes(node types.NodeID, prefixes ...netip.Prefix) 
 	pr.mu.Lock()
 	defer pr.mu.Unlock()
 
+	nlog := log.With().Uint64(zf.NodeID, node.Uint64()).Logger()
+
+	nlog.Debug().
+		Caller().
+		Strs("prefixes", util.PrefixesToString(prefixes)).
+		Msg("PrimaryRoutes.SetRoutes called")
+
 	// If no routes are being set, remove the node from the routes map.
 	if len(prefixes) == 0 {
+		wasPresent := false
+
 		if _, ok := pr.routes[node]; ok {
 			delete(pr.routes, node)
-			return pr.updatePrimaryLocked()
+
+			wasPresent = true
+
+			nlog.Debug().
+				Caller().
+				Msg("removed node from primary routes (no prefixes)")
 		}
 
-		return false
+		changed := pr.updatePrimaryLocked()
+		nlog.Debug().
+			Caller().
+			Bool("wasPresent", wasPresent).
+			Bool(zf.Changes, changed).
+			Str(zf.NewState, pr.stringLocked()).
+			Msg("SetRoutes completed (remove)")
+
+		return changed
 	}
 
 	rs := make(set.Set[netip.Prefix], len(prefixes))
@@ -129,11 +198,25 @@ func (pr *PrimaryRoutes) SetRoutes(node types.NodeID, prefixes ...netip.Prefix) 
 
 	if rs.Len() != 0 {
 		pr.routes[node] = rs
+		nlog.Debug().
+			Caller().
+			Strs("routes", util.PrefixesToString(rs.Slice())).
+			Msg("updated node routes in primary route manager")
 	} else {
 		delete(pr.routes, node)
+		nlog.Debug().
+			Caller().
+			Msg("removed node from primary routes (only exit routes)")
 	}
 
-	return pr.updatePrimaryLocked()
+	changed := pr.updatePrimaryLocked()
+	nlog.Debug().
+		Caller().
+		Bool(zf.Changes, changed).
+		Str(zf.NewState, pr.stringLocked()).
+		Msg("SetRoutes completed (update)")
+
+	return changed
 }
 
 func (pr *PrimaryRoutes) PrimaryRoutes(id types.NodeID) []netip.Prefix {
@@ -157,7 +240,7 @@ func (pr *PrimaryRoutes) PrimaryRoutes(id types.NodeID) []netip.Prefix {
 		}
 	}
 
-	tsaddr.SortPrefixes(routes)
+	slices.SortFunc(routes, netip.Prefix.Compare)
 
 	return routes
 }
@@ -176,15 +259,55 @@ func (pr *PrimaryRoutes) stringLocked() string {
 
 	ids := types.NodeIDs(xmaps.Keys(pr.routes))
 	sort.Sort(ids)
+
 	for _, id := range ids {
 		prefixes := pr.routes[id]
 		fmt.Fprintf(&sb, "\nNode %d: %s", id, strings.Join(util.PrefixesToString(prefixes.Slice()), ", "))
 	}
 
 	fmt.Fprintln(&sb, "\n\nCurrent primary routes:")
+
 	for route, nodeID := range pr.primaries {
 		fmt.Fprintf(&sb, "\nRoute %s: %d", route, nodeID)
 	}
 
 	return sb.String()
+}
+
+// DebugRoutes represents the primary routes state in a structured format for JSON serialization.
+type DebugRoutes struct {
+	// AvailableRoutes maps node IDs to their advertised routes
+	// In the context of primary routes, this represents the routes that are available
+	// for each node. A route will only be available if it is advertised by the node
+	// AND approved.
+	// Only routes by nodes currently connected to the headscale server are included.
+	AvailableRoutes map[types.NodeID][]netip.Prefix `json:"available_routes"`
+
+	// PrimaryRoutes maps route prefixes to the primary node serving them
+	PrimaryRoutes map[string]types.NodeID `json:"primary_routes"`
+}
+
+// DebugJSON returns a structured representation of the primary routes state suitable for JSON serialization.
+func (pr *PrimaryRoutes) DebugJSON() DebugRoutes {
+	pr.mu.Lock()
+	defer pr.mu.Unlock()
+
+	debug := DebugRoutes{
+		AvailableRoutes: make(map[types.NodeID][]netip.Prefix),
+		PrimaryRoutes:   make(map[string]types.NodeID),
+	}
+
+	// Populate available routes
+	for nodeID, routes := range pr.routes {
+		prefixes := routes.Slice()
+		slices.SortFunc(prefixes, netip.Prefix.Compare)
+		debug.AvailableRoutes[nodeID] = prefixes
+	}
+
+	// Populate primary routes
+	for prefix, nodeID := range pr.primaries {
+		debug.PrimaryRoutes[prefix.String()] = nodeID
+	}
+
+	return debug
 }

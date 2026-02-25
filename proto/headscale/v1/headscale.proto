@@ -55,6 +55,13 @@ service HeadscaleService {
     };
   }
 
+  rpc DeletePreAuthKey(DeletePreAuthKeyRequest)
+      returns (DeletePreAuthKeyResponse) {
+    option (google.api.http) = {
+      delete : "/api/v1/preauthkey"
+    };
+  }
+
   rpc ListPreAuthKeys(ListPreAuthKeysRequest)
       returns (ListPreAuthKeysResponse) {
     option (google.api.http) = {
@@ -137,13 +144,6 @@ service HeadscaleService {
     };
   }
 
-  rpc MoveNode(MoveNodeRequest) returns (MoveNodeResponse) {
-    option (google.api.http) = {
-      post : "/api/v1/node/{node_id}/user",
-      body : "*"
-    };
-  }
-
   rpc BackfillNodeIPs(BackfillNodeIPsRequest)
       returns (BackfillNodeIPsResponse) {
     option (google.api.http) = {
@@ -196,6 +196,14 @@ service HeadscaleService {
   }
   // --- Policy end ---
 
+  // --- Health start ---
+  rpc Health(HealthRequest) returns (HealthResponse) {
+    option (google.api.http) = {
+      get : "/api/v1/health"
+    };
+  }
+  // --- Health end ---
+
   // Implement Tailscale API
   // rpc GetDevice(GetDeviceRequest) returns(GetDeviceResponse) {
   //     option(google.api.http) = {
@@ -222,4 +230,10 @@ service HeadscaleService {
   //         post : "/api/v1/device/{id}/routes"
   //     };
   // }
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool database_connectivity = 1;
 }

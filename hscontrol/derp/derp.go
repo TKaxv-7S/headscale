@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"sync"
 	"time"
 
@@ -27,11 +28,14 @@ func loadDERPMapFromPath(path string) (*tailcfg.DERPMap, error) {
 		return nil, err
 	}
 	defer derpFile.Close()
+
 	var derpMap tailcfg.DERPMap
+
 	b, err := io.ReadAll(derpFile)
 	if err != nil {
 		return nil, err
 	}
+
 	err = yaml.Unmarshal(b, &derpMap)
 
 	return &derpMap, err
@@ -56,12 +60,14 @@ func loadDERPMapFromURL(addr url.URL) (*tailcfg.DERPMap, error) {
 	}
 
 	defer resp.Body.Close()
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
 	}
 
 	var derpMap tailcfg.DERPMap
+
 	err = json.Unmarshal(body, &derpMap)
 
 	return &derpMap, err
@@ -126,7 +132,18 @@ func shuffleDERPMap(dm *tailcfg.DERPMap) {
 		return
 	}
 
-	for id, region := range dm.Regions {
+	// Collect region IDs and sort them to ensure deterministic iteration order.
+	// Map iteration order is non-deterministic in Go, which would cause the
+	// shuffle to be non-deterministic even with a fixed seed.
+	ids := make([]int, 0, len(dm.Regions))
+	for id := range dm.Regions {
+		ids = append(ids, id)
+	}
+
+	slices.Sort(ids)
+
+	for _, id := range ids {
+		region := dm.Regions[id]
 		if len(region.Nodes) == 0 {
 			continue
 		}
@@ -140,22 +157,27 @@ var crc64Table = crc64.MakeTable(crc64.ISO)
 var (
 	derpRandomOnce sync.Once
 	derpRandomInst *rand.Rand
-	derpRandomMu   sync.RWMutex
+	derpRandomMu   sync.Mutex
 )
 
 func derpRandom() *rand.Rand {
+	derpRandomMu.Lock()
+	defer derpRandomMu.Unlock()
+
 	derpRandomOnce.Do(func() {
 		seed := cmp.Or(viper.GetString("dns.base_domain"), time.Now().String())
-		rnd := rand.New(rand.NewSource(0))
-		rnd.Seed(int64(crc64.Checksum([]byte(seed), crc64Table)))
+		rnd := rand.New(rand.NewSource(0))                        //nolint:gosec // weak random is fine for DERP scrambling
+		rnd.Seed(int64(crc64.Checksum([]byte(seed), crc64Table))) //nolint:gosec // safe conversion
 		derpRandomInst = rnd
 	})
+
 	return derpRandomInst
 }
 
 func resetDerpRandomForTesting() {
 	derpRandomMu.Lock()
 	defer derpRandomMu.Unlock()
+
 	derpRandomOnce = sync.Once{}
 	derpRandomInst = nil
 }

@@ -7,6 +7,7 @@ import (
 	"github.com/juanfont/headscale/integration/hsic"
 	"github.com/juanfont/headscale/integration/tsic"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
@@ -29,7 +30,7 @@ func TestDERPServerScenario(t *testing.T) {
 
 	derpServerScenario(t, spec, false, func(scenario *Scenario) {
 		allClients, err := scenario.ListTailscaleClients()
-		assertNoErrListClients(t, err)
+		requireNoErrListClients(t, err)
 		t.Logf("checking %d clients for websocket connections", len(allClients))
 
 		for _, client := range allClients {
@@ -43,7 +44,7 @@ func TestDERPServerScenario(t *testing.T) {
 		}
 
 		hsServer, err := scenario.Headscale()
-		assertNoErrGetHeadscale(t, err)
+		requireNoErrGetHeadscale(t, err)
 
 		derpRegion := tailcfg.DERPRegion{
 			RegionCode: "test-derpverify",
@@ -79,7 +80,7 @@ func TestDERPServerWebsocketScenario(t *testing.T) {
 
 	derpServerScenario(t, spec, true, func(scenario *Scenario) {
 		allClients, err := scenario.ListTailscaleClients()
-		assertNoErrListClients(t, err)
+		requireNoErrListClients(t, err)
 		t.Logf("checking %d clients for websocket connections", len(allClients))
 
 		for _, client := range allClients {
@@ -108,7 +109,7 @@ func derpServerScenario(
 	IntegrationSkip(t)
 
 	scenario, err := NewScenario(spec)
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	defer scenario.ShutdownAssertNoPanics(t)
 
@@ -128,16 +129,16 @@ func derpServerScenario(
 			"HEADSCALE_DERP_SERVER_VERIFY_CLIENTS": "true",
 		}),
 	)
-	assertNoErrHeadscaleEnv(t, err)
+	requireNoErrHeadscaleEnv(t, err)
 
 	allClients, err := scenario.ListTailscaleClients()
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErrSync(t, err)
+	requireNoErrSync(t, err)
 
 	allHostnames, err := scenario.ListTailscaleClientsFQDNs()
-	assertNoErrListFQDN(t, err)
+	requireNoErrListFQDN(t, err)
 
 	for _, client := range allClients {
 		assert.EventuallyWithT(t, func(ct *assert.CollectT) {
@@ -177,7 +178,8 @@ func derpServerScenario(
 	t.Logf("Run 1: %d successful pings out of %d", success, len(allClients)*len(allHostnames))
 
 	// Let the DERP updater run a couple of times to ensure it does not
-	// break the DERPMap.
+	// break the DERPMap. The updater runs on a 10s interval by default.
+	//nolint:forbidigo // Intentional delay: must wait for DERP updater to run multiple times (interval-based)
 	time.Sleep(30 * time.Second)
 
 	success = pingDerpAllHelper(t, allClients, allHostnames)

@@ -18,16 +18,27 @@ const (
 	ipv4AddressLength = 32
 	ipv6AddressLength = 128
 
+	// LabelHostnameLength is the maximum length for a DNS label,
 	// value related to RFC 1123 and 952.
 	LabelHostnameLength = 63
 )
 
-var (
-	invalidDNSRegex         = regexp.MustCompile("[^a-z0-9-.]+")
-	invalidCharsInUserRegex = regexp.MustCompile("[^a-z0-9-.]+")
-)
+var invalidDNSRegex = regexp.MustCompile("[^a-z0-9-.]+")
 
-var ErrInvalidUserName = errors.New("invalid user name")
+// DNS validation errors.
+var (
+	ErrInvalidHostName         = errors.New("invalid hostname")
+	ErrUsernameTooShort        = errors.New("username must be at least 2 characters long")
+	ErrUsernameMustStartLetter = errors.New("username must start with a letter")
+	ErrUsernameTooManyAt       = errors.New("username cannot contain more than one '@'")
+	ErrUsernameInvalidChar     = errors.New("username contains invalid character")
+	ErrHostnameTooShort        = errors.New("hostname is too short, must be at least 2 characters")
+	ErrHostnameTooLong         = errors.New("hostname is too long, must not exceed 63 characters")
+	ErrHostnameMustBeLowercase = errors.New("hostname must be lowercase")
+	ErrHostnameHyphenBoundary  = errors.New("hostname cannot start or end with a hyphen")
+	ErrHostnameDotBoundary     = errors.New("hostname cannot start or end with a dot")
+	ErrHostnameInvalidChars    = errors.New("hostname contains invalid characters")
+)
 
 // ValidateUsername checks if a username is valid.
 // It must be at least 2 characters long, start with a letter, and contain
@@ -37,15 +48,16 @@ var ErrInvalidUserName = errors.New("invalid user name")
 func ValidateUsername(username string) error {
 	// Ensure the username meets the minimum length requirement
 	if len(username) < 2 {
-		return errors.New("username must be at least 2 characters long")
+		return ErrUsernameTooShort
 	}
 
 	// Ensure the username starts with a letter
 	if !unicode.IsLetter(rune(username[0])) {
-		return errors.New("username must start with a letter")
+		return ErrUsernameMustStartLetter
 	}
 
 	atCount := 0
+
 	for _, char := range username {
 		switch {
 		case unicode.IsLetter(char),
@@ -57,52 +69,84 @@ func ValidateUsername(username string) error {
 		case char == '@':
 			atCount++
 			if atCount > 1 {
-				return errors.New("username cannot contain more than one '@'")
+				return ErrUsernameTooManyAt
 			}
 		default:
-			return fmt.Errorf("username contains invalid character: '%c'", char)
+			return fmt.Errorf("%w: '%c'", ErrUsernameInvalidChar, char)
 		}
 	}
 
 	return nil
 }
 
-func CheckForFQDNRules(name string) error {
-	// Ensure the username meets the minimum length requirement
+// ValidateHostname checks if a hostname meets DNS requirements.
+// This function does NOT modify the input - it only validates.
+// The hostname must already be lowercase and contain only valid characters.
+func ValidateHostname(name string) error {
 	if len(name) < 2 {
-		return errors.New("name must be at least 2 characters long")
+		return fmt.Errorf("%w: %q", ErrHostnameTooShort, name)
 	}
 
 	if len(name) > LabelHostnameLength {
-		return fmt.Errorf(
-			"DNS segment must not be over 63 chars. %v doesn't comply with this rule: %w",
-			name,
-			ErrInvalidUserName,
-		)
+		return fmt.Errorf("%w: %q", ErrHostnameTooLong, name)
 	}
+
 	if strings.ToLower(name) != name {
-		return fmt.Errorf(
-			"DNS segment should be lowercase. %v doesn't comply with this rule: %w",
-			name,
-			ErrInvalidUserName,
-		)
+		return fmt.Errorf("%w: %q (try %q)", ErrHostnameMustBeLowercase, name, strings.ToLower(name))
 	}
+
+	if strings.HasPrefix(name, "-") || strings.HasSuffix(name, "-") {
+		return fmt.Errorf("%w: %q", ErrHostnameHyphenBoundary, name)
+	}
+
+	if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".") {
+		return fmt.Errorf("%w: %q", ErrHostnameDotBoundary, name)
+	}
+
 	if invalidDNSRegex.MatchString(name) {
-		return fmt.Errorf(
-			"DNS segment should only be composed of lowercase ASCII letters numbers, hyphen and dots. %v doesn't comply with these rules: %w",
-			name,
-			ErrInvalidUserName,
-		)
+		return fmt.Errorf("%w: %q", ErrHostnameInvalidChars, name)
 	}
 
 	return nil
 }
 
-func ConvertWithFQDNRules(name string) string {
+// NormaliseHostname transforms a string into a valid DNS hostname.
+// Returns error if the transformation results in an invalid hostname.
+//
+// Transformations applied:
+// - Converts to lowercase
+// - Removes invalid DNS characters
+// - Truncates to 63 characters if needed
+//
+// After transformation, validates the result.
+func NormaliseHostname(name string) (string, error) {
+	// Early return if already valid
+	err := ValidateHostname(name)
+	if err == nil {
+		return name, nil
+	}
+
+	// Transform to lowercase
 	name = strings.ToLower(name)
+
+	// Strip invalid DNS characters
 	name = invalidDNSRegex.ReplaceAllString(name, "")
 
-	return name
+	// Truncate to DNS label limit
+	if len(name) > LabelHostnameLength {
+		name = name[:LabelHostnameLength]
+	}
+
+	// Validate result after transformation
+	err = ValidateHostname(name)
+	if err != nil {
+		return "", fmt.Errorf(
+			"hostname invalid after normalisation: %w",
+			err,
+		)
+	}
+
+	return name, nil
 }
 
 // generateMagicDNSRootDomains generates a list of DNS entries to be included in `Routes` in `MapResponse`.
@@ -123,6 +167,7 @@ func ConvertWithFQDNRules(name string) string {
 // and do not make use of RFC2317 ("Classless IN-ADDR.ARPA delegation") - hence generating the entries for the next
 // class block only.
 
+// GenerateIPv4DNSRootDomain generates the IPv4 reverse DNS root domains.
 // From the netmask we can find out the wildcard bits (the bits that are not set in the netmask).
 // This allows us to then calculate the subnets included in the subsequent class block and generate the entries.
 func GenerateIPv4DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
@@ -136,25 +181,27 @@ func GenerateIPv4DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
 	// wildcardBits is the number of bits not under the mask in the lastOctet
 	wildcardBits := ByteSize - maskBits%ByteSize
 
-	// min is the value in the lastOctet byte of the IP
-	// max is basically 2^wildcardBits - i.e., the value when all the wildcardBits are set to 1
-	min := uint(netRange.IP[lastOctet])
-	max := (min + 1<<uint(wildcardBits)) - 1
+	// minVal is the value in the lastOctet byte of the IP
+	// maxVal is basically 2^wildcardBits - i.e., the value when all the wildcardBits are set to 1
+	minVal := uint(netRange.IP[lastOctet])
+	maxVal := (minVal + 1<<uint(wildcardBits)) - 1 //nolint:gosec // wildcardBits is always < 8, no overflow
 
 	// here we generate the base domain (e.g., 100.in-addr.arpa., 16.172.in-addr.arpa., etc.)
 	rdnsSlice := []string{}
 	for i := lastOctet - 1; i >= 0; i-- {
 		rdnsSlice = append(rdnsSlice, strconv.FormatUint(uint64(netRange.IP[i]), 10))
 	}
+
 	rdnsSlice = append(rdnsSlice, "in-addr.arpa.")
 	rdnsBase := strings.Join(rdnsSlice, ".")
 
-	fqdns := make([]dnsname.FQDN, 0, max-min+1)
-	for i := min; i <= max; i++ {
+	fqdns := make([]dnsname.FQDN, 0, maxVal-minVal+1)
+	for i := minVal; i <= maxVal; i++ {
 		fqdn, err := dnsname.ToFQDN(fmt.Sprintf("%d.%s", i, rdnsBase))
 		if err != nil {
 			continue
 		}
+
 		fqdns = append(fqdns, fqdn)
 	}
 
@@ -179,6 +226,7 @@ func GenerateIPv4DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
 // and do not make use of RFC2317 ("Classless IN-ADDR.ARPA delegation") - hence generating the entries for the next
 // class block only.
 
+// GenerateIPv6DNSRootDomain generates the IPv6 reverse DNS root domains.
 // From the netmask we can find out the wildcard bits (the bits that are not set in the netmask).
 // This allows us to then calculate the subnets included in the subsequent class block and generate the entries.
 func GenerateIPv6DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
@@ -212,18 +260,22 @@ func GenerateIPv6DNSRootDomain(ipPrefix netip.Prefix) []dnsname.FQDN {
 	}
 
 	var fqdns []dnsname.FQDN
+
 	if maskBits%4 == 0 {
 		dom, _ := makeDomain()
 		fqdns = append(fqdns, dom)
 	} else {
 		domCount := 1 << (maskBits % nibbleLen)
+
 		fqdns = make([]dnsname.FQDN, 0, domCount)
 		for i := range domCount {
 			varNibble := fmt.Sprintf("%x", i)
+
 			dom, err := makeDomain(varNibble)
 			if err != nil {
 				continue
 			}
+
 			fqdns = append(fqdns, dom)
 		}
 	}

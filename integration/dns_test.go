@@ -10,6 +10,7 @@ import (
 	"github.com/juanfont/headscale/integration/hsic"
 	"github.com/juanfont/headscale/integration/tsic"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"tailscale.com/tailcfg"
 )
 
@@ -22,26 +23,27 @@ func TestResolveMagicDNS(t *testing.T) {
 	}
 
 	scenario, err := NewScenario(spec)
-	assertNoErr(t, err)
+
+	require.NoError(t, err)
 	defer scenario.ShutdownAssertNoPanics(t)
 
 	err = scenario.CreateHeadscaleEnv([]tsic.Option{}, hsic.WithTestName("magicdns"))
-	assertNoErrHeadscaleEnv(t, err)
+	requireNoErrHeadscaleEnv(t, err)
 
 	allClients, err := scenario.ListTailscaleClients()
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErrSync(t, err)
+	requireNoErrSync(t, err)
 
 	// assertClientsState(t, allClients)
 
 	// Poor mans cache
 	_, err = scenario.ListTailscaleClientsFQDNs()
-	assertNoErrListFQDN(t, err)
+	requireNoErrListFQDN(t, err)
 
 	_, err = scenario.ListTailscaleClientsIPs()
-	assertNoErrListClientIPs(t, err)
+	requireNoErrListClientIPs(t, err)
 
 	for _, client := range allClients {
 		for _, peer := range allClients {
@@ -78,26 +80,22 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 	}
 
 	scenario, err := NewScenario(spec)
-	assertNoErr(t, err)
+
+	require.NoError(t, err)
 	defer scenario.ShutdownAssertNoPanics(t)
 
 	const erPath = "/tmp/extra_records.json"
 
-	extraRecords := []tailcfg.DNSRecord{
-		{
-			Name:  "test.myvpn.example.com",
-			Type:  "A",
-			Value: "6.6.6.6",
-		},
-	}
-	b, _ := json.Marshal(extraRecords)
+	extraRecords := make([]tailcfg.DNSRecord, 0, 2)
+	extraRecords = append(extraRecords, tailcfg.DNSRecord{
+		Name:  "test.myvpn.example.com",
+		Type:  "A",
+		Value: "6.6.6.6",
+	})
+	b, _ := json.Marshal(extraRecords) //nolint:errchkjson
 
 	err = scenario.CreateHeadscaleEnv([]tsic.Option{
-		tsic.WithDockerEntrypoint([]string{
-			"/bin/sh",
-			"-c",
-			"/bin/sleep 3 ; apk add python3 curl bind-tools ; update-ca-certificates ; tailscaled --tun=tsdev",
-		}),
+		tsic.WithPackages("python3", "curl", "bind-tools"),
 	},
 		hsic.WithTestName("extrarecords"),
 		hsic.WithConfigEnv(map[string]string{
@@ -109,32 +107,32 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 		hsic.WithEmbeddedDERPServerOnly(),
 		hsic.WithTLS(),
 	)
-	assertNoErrHeadscaleEnv(t, err)
+	requireNoErrHeadscaleEnv(t, err)
 
 	allClients, err := scenario.ListTailscaleClients()
-	assertNoErrListClients(t, err)
+	requireNoErrListClients(t, err)
 
 	err = scenario.WaitForTailscaleSync()
-	assertNoErrSync(t, err)
+	requireNoErrSync(t, err)
 
 	// assertClientsState(t, allClients)
 
 	// Poor mans cache
 	_, err = scenario.ListTailscaleClientsFQDNs()
-	assertNoErrListFQDN(t, err)
+	requireNoErrListFQDN(t, err)
 
 	_, err = scenario.ListTailscaleClientsIPs()
-	assertNoErrListClientIPs(t, err)
+	requireNoErrListClientIPs(t, err)
 
 	for _, client := range allClients {
 		assertCommandOutputContains(t, client, []string{"dig", "test.myvpn.example.com"}, "6.6.6.6")
 	}
 
 	hs, err := scenario.Headscale()
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	// Write the file directly into place from the docker API.
-	b0, _ := json.Marshal([]tailcfg.DNSRecord{
+	b0, _ := json.Marshal([]tailcfg.DNSRecord{ //nolint:errchkjson
 		{
 			Name:  "docker.myvpn.example.com",
 			Type:  "A",
@@ -143,7 +141,7 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 	})
 
 	err = hs.WriteFile(erPath, b0)
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	for _, client := range allClients {
 		assertCommandOutputContains(t, client, []string{"dig", "docker.myvpn.example.com"}, "2.2.2.2")
@@ -156,12 +154,12 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 		Type:  "A",
 		Value: "7.7.7.7",
 	})
-	b2, _ := json.Marshal(extraRecords)
+	b2, _ := json.Marshal(extraRecords) //nolint:errchkjson
 
 	err = hs.WriteFile(erPath+"2", b2)
-	assertNoErr(t, err)
+	require.NoError(t, err)
 	_, err = hs.Execute([]string{"mv", erPath + "2", erPath})
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	for _, client := range allClients {
 		assertCommandOutputContains(t, client, []string{"dig", "test.myvpn.example.com"}, "6.6.6.6")
@@ -170,7 +168,7 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 
 	// Write a new file and copy it to the path to ensure the reload
 	// works when a file is copied into place.
-	b3, _ := json.Marshal([]tailcfg.DNSRecord{
+	b3, _ := json.Marshal([]tailcfg.DNSRecord{ //nolint:errchkjson
 		{
 			Name:  "copy.myvpn.example.com",
 			Type:  "A",
@@ -179,16 +177,16 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 	})
 
 	err = hs.WriteFile(erPath+"3", b3)
-	assertNoErr(t, err)
+	require.NoError(t, err)
 	_, err = hs.Execute([]string{"cp", erPath + "3", erPath})
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	for _, client := range allClients {
 		assertCommandOutputContains(t, client, []string{"dig", "copy.myvpn.example.com"}, "8.8.8.8")
 	}
 
 	// Write in place to ensure pipe like behaviour works
-	b4, _ := json.Marshal([]tailcfg.DNSRecord{
+	b4, _ := json.Marshal([]tailcfg.DNSRecord{ //nolint:errchkjson
 		{
 			Name:  "docker.myvpn.example.com",
 			Type:  "A",
@@ -197,7 +195,7 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 	})
 	command := []string{"echo", fmt.Sprintf("'%s'", string(b4)), ">", erPath}
 	_, err = hs.Execute([]string{"bash", "-c", strings.Join(command, " ")})
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	for _, client := range allClients {
 		assertCommandOutputContains(t, client, []string{"dig", "docker.myvpn.example.com"}, "9.9.9.9")
@@ -205,7 +203,7 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 
 	// Delete the file and create a new one to ensure it is picked up again.
 	_, err = hs.Execute([]string{"rm", erPath})
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	// The same paths should still be available as it is not cleared on delete.
 	assert.EventuallyWithT(t, func(ct *assert.CollectT) {
@@ -219,7 +217,7 @@ func TestResolveMagicDNSExtraRecordsPath(t *testing.T) {
 	// Write a new file, the backoff mechanism should make the filewatcher pick it up
 	// again.
 	err = hs.WriteFile(erPath, b3)
-	assertNoErr(t, err)
+	require.NoError(t, err)
 
 	for _, client := range allClients {
 		assertCommandOutputContains(t, client, []string{"dig", "copy.myvpn.example.com"}, "8.8.8.8")

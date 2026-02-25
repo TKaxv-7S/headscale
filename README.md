@@ -1,4 +1,4 @@
-![headscale logo](./docs/logo/headscale3_header_stacked_left.png)
+![headscale logo](./docs/assets/logo/headscale3_header_stacked_left.png)
 
 ![ci](https://github.com/juanfont/headscale/actions/workflows/test.yml/badge.svg)
 
@@ -63,8 +63,12 @@ and container to run Headscale.**
 
 Please have a look at the [`documentation`](https://headscale.net/stable/).
 
+For NixOS users, a module is available in [`nix/`](./nix/).
+
 ## Talks
 
+- Fosdem 2026 (video): [Headscale & Tailscale: The complementary open source clone](https://fosdem.org/2026/schedule/event/KYQ3LL-headscale-the-complementary-open-source-clone/)
+  - presented by Kristoffer Dalby
 - Fosdem 2023 (video): [Headscale: How we are using integration testing to reimplement Tailscale](https://fosdem.org/2023/schedule/event/goheadscale/)
   - presented by Juan Font Alonso and Kristoffer Dalby
 
@@ -147,6 +151,7 @@ make build
 We recommend using Nix for dependency management to ensure you have all required tools. If you prefer to manage dependencies yourself, you can use Make directly:
 
 **With Nix (recommended):**
+
 ```shell
 nix develop
 make test
@@ -154,6 +159,7 @@ make build
 ```
 
 **With your own dependencies:**
+
 ```shell
 make test
 make build

@@ -13,12 +13,14 @@ import (
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/rs/zerolog/log"
 	"golang.org/x/net/http2"
-	"gorm.io/gorm"
 	"tailscale.com/control/controlbase"
 	"tailscale.com/control/controlhttp/controlhttpserver"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
 )
+
+// ErrUnsupportedClientVersion is returned when a client connects with an unsupported protocol version.
+var ErrUnsupportedClientVersion = errors.New("unsupported client version")
 
 const (
 	// ts2021UpgradePath is the path that the server listens on for the WebSockets upgrade.
@@ -30,9 +32,6 @@ const (
 	// of length. Then that many bytes of JSON-encoded tailcfg.EarlyNoise.
 	// The early payload is optional. Some servers may not send it... But we do!
 	earlyPayloadMagic = "\xff\xff\xffTS"
-
-	// EarlyNoise was added in protocol version 49.
-	earlyNoiseCapabilityVersion = 49
 )
 
 type noiseServer struct {
@@ -55,7 +54,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 	writer http.ResponseWriter,
 	req *http.Request,
 ) {
-	log.Trace().Caller().Msgf("Noise upgrade handler for client %s", req.RemoteAddr)
+	log.Trace().Caller().Msgf("noise upgrade handler for client %s", req.RemoteAddr)
 
 	upgrade := req.Header.Get("Upgrade")
 	if upgrade == "" {
@@ -64,7 +63,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 		// be passed to Headscale. Let's give them a hint.
 		log.Warn().
 			Caller().
-			Msg("No Upgrade header in TS2021 request. If headscale is behind a reverse proxy, make sure it is configured to pass WebSockets through.")
+			Msg("no upgrade header in TS2021 request. If headscale is behind a reverse proxy, make sure it is configured to pass WebSockets through.")
 		http.Error(writer, "Internal error", http.StatusInternalServerError)
 
 		return
@@ -83,7 +82,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 		noiseServer.earlyNoise,
 	)
 	if err != nil {
-		httpError(writer, fmt.Errorf("noise upgrade failed: %w", err))
+		httpError(writer, fmt.Errorf("upgrading noise connection: %w", err))
 		return
 	}
 
@@ -121,7 +120,7 @@ func (h *Headscale) NoiseUpgradeHandler(
 }
 
 func unsupportedClientError(version tailcfg.CapabilityVersion) error {
-	return fmt.Errorf("unsupported client version: %s (%d)", capver.TailscaleVersion(version), version)
+	return fmt.Errorf("%w: %s (%d)", ErrUnsupportedClientVersion, capver.TailscaleVersion(version), version)
 }
 
 func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) error {
@@ -141,17 +140,20 @@ func (ns *noiseServer) earlyNoise(protocolVersion int, writer io.Writer) error {
 	// an HTTP/2 settings frame, which isn't of type 'T')
 	var notH2Frame [5]byte
 	copy(notH2Frame[:], earlyPayloadMagic)
+
 	var lenBuf [4]byte
-	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(earlyJSON)))
+	binary.BigEndian.PutUint32(lenBuf[:], uint32(len(earlyJSON))) //nolint:gosec // JSON length is bounded
 	// These writes are all buffered by caller, so fine to do them
 	// separately:
-	if _, err := writer.Write(notH2Frame[:]); err != nil {
+	if _, err := writer.Write(notH2Frame[:]); err != nil { //nolint:noinlineerr
 		return err
 	}
-	if _, err := writer.Write(lenBuf[:]); err != nil {
+
+	if _, err := writer.Write(lenBuf[:]); err != nil { //nolint:noinlineerr
 		return err
 	}
-	if _, err := writer.Write(earlyJSON); err != nil {
+
+	if _, err := writer.Write(earlyJSON); err != nil { //nolint:noinlineerr
 		return err
 	}
 
@@ -176,8 +178,8 @@ func rejectUnsupported(
 			Int("client_cap_ver", int(version)).
 			Str("minimum_version", capver.TailscaleVersion(capver.MinSupportedCapabilityVersion)).
 			Str("client_version", capver.TailscaleVersion(version)).
-			Str("node_key", nkey.ShortString()).
-			Str("machine_key", mkey.ShortString()).
+			Str("node.key", nkey.ShortString()).
+			Str("machine.key", mkey.ShortString()).
 			Msg("unsupported client connected")
 		http.Error(writer, unsupportedClientError(version).Error(), http.StatusBadRequest)
 
@@ -203,7 +205,7 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	body, _ := io.ReadAll(req.Body)
 
 	var mapRequest tailcfg.MapRequest
-	if err := json.Unmarshal(body, &mapRequest); err != nil {
+	if err := json.Unmarshal(body, &mapRequest); err != nil { //nolint:noinlineerr
 		httpError(writer, err)
 		return
 	}
@@ -222,7 +224,8 @@ func (ns *noiseServer) NoisePollNetMapHandler(
 	ns.nodeKey = nv.NodeKey()
 
 	sess := ns.headscale.newMapSession(req.Context(), mapRequest, writer, nv.AsStruct())
-	sess.tracef("a node sending a MapRequest with Noise protocol")
+	sess.log.Trace().Caller().Msg("a node sending a MapRequest with Noise protocol")
+
 	if !sess.isStreaming() {
 		sess.serve()
 	} else {
@@ -245,14 +248,16 @@ func (ns *noiseServer) NoiseRegistrationHandler(
 		return
 	}
 
-	registerRequest, registerResponse := func() (*tailcfg.RegisterRequest, *tailcfg.RegisterResponse) {
+	registerRequest, registerResponse := func() (*tailcfg.RegisterRequest, *tailcfg.RegisterResponse) { //nolint:contextcheck
 		var resp *tailcfg.RegisterResponse
+
 		body, err := io.ReadAll(req.Body)
 		if err != nil {
 			return &tailcfg.RegisterRequest{}, regErr(err)
 		}
+
 		var regReq tailcfg.RegisterRequest
-		if err := json.Unmarshal(body, &regReq); err != nil {
+		if err := json.Unmarshal(body, &regReq); err != nil { //nolint:noinlineerr
 			return &regReq, regErr(err)
 		}
 
@@ -260,11 +265,11 @@ func (ns *noiseServer) NoiseRegistrationHandler(
 
 		resp, err = ns.headscale.handleRegister(req.Context(), regReq, ns.conn.Peer())
 		if err != nil {
-			var httpErr HTTPError
-			if errors.As(err, &httpErr) {
+			if httpErr, ok := errors.AsType[HTTPError](err); ok {
 				resp = &tailcfg.RegisterResponse{
 					Error: httpErr.Msg,
 				}
+
 				return &regReq, resp
 			}
 
@@ -282,8 +287,9 @@ func (ns *noiseServer) NoiseRegistrationHandler(
 	writer.Header().Set("Content-Type", "application/json; charset=utf-8")
 	writer.WriteHeader(http.StatusOK)
 
-	if err := json.NewEncoder(writer).Encode(registerResponse); err != nil {
-		log.Error().Err(err).Msg("NoiseRegistrationHandler: failed to encode RegisterResponse")
+	err := json.NewEncoder(writer).Encode(registerResponse)
+	if err != nil {
+		log.Error().Caller().Err(err).Msg("noise registration handler: failed to encode RegisterResponse")
 		return
 	}
 
@@ -296,15 +302,10 @@ func (ns *noiseServer) NoiseRegistrationHandler(
 // getAndValidateNode retrieves the node from the database using the NodeKey
 // and validates that it matches the MachineKey from the Noise session.
 func (ns *noiseServer) getAndValidateNode(mapRequest tailcfg.MapRequest) (types.NodeView, error) {
-	node, err := ns.headscale.state.GetNodeByNodeKey(mapRequest.NodeKey)
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return types.NodeView{}, NewHTTPError(http.StatusNotFound, "node not found", nil)
-		}
-		return types.NodeView{}, NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("lookup node: %s", err), nil)
+	nv, ok := ns.headscale.state.GetNodeByNodeKey(mapRequest.NodeKey)
+	if !ok {
+		return types.NodeView{}, NewHTTPError(http.StatusNotFound, "node not found", nil)
 	}
-
-	nv := node.View()
 
 	// Validate that the MachineKey in the Noise session matches the one associated with the NodeKey.
 	if ns.machineKey != nv.MachineKey() {

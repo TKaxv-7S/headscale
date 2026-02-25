@@ -6,8 +6,7 @@ body:
   - type: checkboxes
     attributes:
       label: Is this a support request?
-      description:
-        This issue tracker is for bugs and feature requests only. If you need
+      description: This issue tracker is for bugs and feature requests only. If you need
         help, please use ask in our Discord community
       options:
         - label: This is not a support request
@@ -15,8 +14,7 @@ body:
   - type: checkboxes
     attributes:
       label: Is there an existing issue for this?
-      description:
-        Please search to see if an issue already exists for the bug you
+      description: Please search to see if an issue already exists for the bug you
         encountered.
       options:
         - label: I have searched the existing issues
@@ -52,12 +50,15 @@ body:
         If you are using a container, always provide the headscale version and not only the Docker image version.
         Please do not put "latest".
 
+        Describe your "headscale network". Is there a lot of nodes, are the nodes all interconnected, are some subnet routers?
+
         If you are experiencing a problem during an upgrade, please provide the versions of the old and new versions of Headscale and Tailscale.
 
         examples:
           - **OS**: Ubuntu 24.04
           - **Headscale version**: 0.24.3
           - **Tailscale version**: 1.80.0
+          - **Number of nodes**: 20
       value: |
         - OS:
         - Headscale version:

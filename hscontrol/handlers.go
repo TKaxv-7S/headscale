@@ -1,6 +1,7 @@
 package hscontrol
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,9 +9,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
-	"github.com/chasefleming/elem-go/styles"
 	"github.com/gorilla/mux"
+	"github.com/juanfont/headscale/hscontrol/assets"
 	"github.com/juanfont/headscale/hscontrol/templates"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/rs/zerolog/log"
@@ -18,7 +20,7 @@ import (
 )
 
 const (
-	// The CapabilityVersion is used by Tailscale clients to indicate
+	// NoiseCapabilityVersion is used by Tailscale clients to indicate
 	// their codebase version. Tailscale clients can communicate over TS2021
 	// from CapabilityVersion 28, but we only have good support for it
 	// since https://github.com/tailscale/tailscale/pull/4323 (Noise in any HTTPS port).
@@ -34,8 +36,7 @@ const (
 
 // httpError logs an error and sends an HTTP error response with the given.
 func httpError(w http.ResponseWriter, err error) {
-	var herr HTTPError
-	if errors.As(err, &herr) {
+	if herr, ok := errors.AsType[HTTPError](err); ok {
 		http.Error(w, herr.Msg, herr.Code)
 		log.Error().Err(herr.Err).Int("code", herr.Code).Msgf("user msg: %s", herr.Msg)
 	} else {
@@ -54,7 +55,7 @@ type HTTPError struct {
 func (e HTTPError) Error() string { return fmt.Sprintf("http error[%d]: %s, %s", e.Code, e.Msg, e.Err) }
 func (e HTTPError) Unwrap() error { return e.Err }
 
-// Error returns an HTTPError containing the given information.
+// NewHTTPError returns an HTTPError containing the given information.
 func NewHTTPError(code int, msg string, err error) HTTPError {
 	return HTTPError{Code: code, Msg: msg, Err: err}
 }
@@ -62,7 +63,7 @@ func NewHTTPError(code int, msg string, err error) HTTPError {
 var errMethodNotAllowed = NewHTTPError(http.StatusMethodNotAllowed, "method not allowed", nil)
 
 var ErrRegisterMethodCLIDoesNotSupportExpire = errors.New(
-	"machines registered with CLI does not support expire",
+	"machines registered with CLI do not support expiry",
 )
 
 func parseCapabilityVersion(req *http.Request) (tailcfg.CapabilityVersion, error) {
@@ -74,7 +75,7 @@ func parseCapabilityVersion(req *http.Request) (tailcfg.CapabilityVersion, error
 
 	clientCapabilityVersion, err := strconv.Atoi(clientCapabilityStr)
 	if err != nil {
-		return 0, NewHTTPError(http.StatusBadRequest, "invalid capability version", fmt.Errorf("failed to parse capability version: %w", err))
+		return 0, NewHTTPError(http.StatusBadRequest, "invalid capability version", fmt.Errorf("parsing capability version: %w", err))
 	}
 
 	return tailcfg.CapabilityVersion(clientCapabilityVersion), nil
@@ -86,21 +87,28 @@ func (h *Headscale) handleVerifyRequest(
 ) error {
 	body, err := io.ReadAll(req.Body)
 	if err != nil {
-		return fmt.Errorf("cannot read request body: %w", err)
+		return fmt.Errorf("reading request body: %w", err)
 	}
 
 	var derpAdmitClientRequest tailcfg.DERPAdmitClientRequest
-	if err := json.Unmarshal(body, &derpAdmitClientRequest); err != nil {
-		return NewHTTPError(http.StatusBadRequest, "Bad Request: invalid JSON", fmt.Errorf("cannot parse derpAdmitClientRequest: %w", err))
+	if err := json.Unmarshal(body, &derpAdmitClientRequest); err != nil { //nolint:noinlineerr
+		return NewHTTPError(http.StatusBadRequest, "Bad Request: invalid JSON", fmt.Errorf("parsing DERP client request: %w", err))
 	}
 
-	nodes, err := h.state.ListNodes()
-	if err != nil {
-		return fmt.Errorf("cannot list nodes: %w", err)
+	nodes := h.state.ListNodes()
+
+	// Check if any node has the requested NodeKey
+	var nodeKeyFound bool
+
+	for _, node := range nodes.All() {
+		if node.NodeKey() == derpAdmitClientRequest.NodePublic {
+			nodeKeyFound = true
+			break
+		}
 	}
 
 	resp := &tailcfg.DERPAdmitClientResponse{
-		Allow: nodes.ContainsNodeKey(derpAdmitClientRequest.NodePublic),
+		Allow: nodeKeyFound,
 	}
 
 	return json.NewEncoder(writer).Encode(resp)
@@ -122,6 +130,7 @@ func (h *Headscale) VerifyHandler(
 		httpError(writer, err)
 		return
 	}
+
 	writer.Header().Set("Content-Type", "application/json")
 }
 
@@ -143,8 +152,13 @@ func (h *Headscale) KeyHandler(
 		resp := tailcfg.OverTLSPublicKeyResponse{
 			PublicKey: h.noisePrivateKey.Public(),
 		}
+
 		writer.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(writer).Encode(resp)
+
+		err := json.NewEncoder(writer).Encode(resp)
+		if err != nil {
+			log.Error().Err(err).Msg("failed to encode public key response")
+		}
 
 		return
 	}
@@ -165,13 +179,18 @@ func (h *Headscale) HealthHandler(
 
 		if err != nil {
 			writer.WriteHeader(http.StatusInternalServerError)
+
 			res.Status = "fail"
 		}
 
-		json.NewEncoder(writer).Encode(res)
+		encErr := json.NewEncoder(writer).Encode(res)
+		if encErr != nil {
+			log.Error().Err(encErr).Msg("failed to encode health response")
+		}
 	}
 
-	if err := h.state.PingDB(req.Context()); err != nil {
+	err := h.state.PingDB(req.Context())
+	if err != nil {
 		respond(err)
 
 		return
@@ -186,20 +205,34 @@ func (h *Headscale) RobotsHandler(
 ) {
 	writer.Header().Set("Content-Type", "text/plain")
 	writer.WriteHeader(http.StatusOK)
+
 	_, err := writer.Write([]byte("User-agent: *\nDisallow: /"))
 	if err != nil {
 		log.Error().
 			Caller().
 			Err(err).
-			Msg("Failed to write response")
+			Msg("Failed to write HTTP response")
 	}
 }
 
-var codeStyleRegisterWebAPI = styles.Props{
-	styles.Display:         "block",
-	styles.Padding:         "20px",
-	styles.Border:          "1px solid #bbb",
-	styles.BackgroundColor: "#eee",
+// VersionHandler returns version information about the Headscale server
+// Listens in /version.
+func (h *Headscale) VersionHandler(
+	writer http.ResponseWriter,
+	req *http.Request,
+) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(http.StatusOK)
+
+	versionInfo := types.GetVersionInfo()
+
+	err := json.NewEncoder(writer).Encode(versionInfo)
+	if err != nil {
+		log.Error().
+			Caller().
+			Err(err).
+			Msg("Failed to write version response")
+	}
 }
 
 type AuthProviderWeb struct {
@@ -219,7 +252,7 @@ func (a *AuthProviderWeb) AuthURL(registrationId types.RegistrationID) string {
 		registrationId.String())
 }
 
-// RegisterWebAPI shows a simple message in the browser to point to the CLI
+// RegisterHandler shows a simple message in the browser to point to the CLI
 // Listens in /register/:registration_id.
 //
 // This is not part of the Tailscale control API, as we could send whatever URL
@@ -242,5 +275,28 @@ func (a *AuthProviderWeb) RegisterHandler(
 
 	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writer.WriteHeader(http.StatusOK)
-	writer.Write([]byte(templates.RegisterWeb(registrationId).Render()))
+
+	_, err = writer.Write([]byte(templates.RegisterWeb(registrationId).Render()))
+	if err != nil {
+		log.Error().Err(err).Msg("failed to write register response")
+	}
+}
+
+func FaviconHandler(writer http.ResponseWriter, req *http.Request) {
+	writer.Header().Set("Content-Type", "image/png")
+	http.ServeContent(writer, req, "favicon.ico", time.Unix(0, 0), bytes.NewReader(assets.Favicon))
+}
+
+// BlankHandler returns a blank page with favicon linked.
+func BlankHandler(writer http.ResponseWriter, res *http.Request) {
+	writer.Header().Set("Content-Type", "text/html; charset=utf-8")
+	writer.WriteHeader(http.StatusOK)
+
+	_, err := writer.Write([]byte(templates.BlankPage().Render()))
+	if err != nil {
+		log.Error().
+			Caller().
+			Err(err).
+			Msg("Failed to write HTTP response")
+	}
 }

@@ -10,8 +10,9 @@ import (
 	"time"
 
 	"github.com/juanfont/headscale/hscontrol/types"
-	"github.com/juanfont/headscale/hscontrol/types/change"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/juanfont/headscale/hscontrol/util/zlog/zf"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	"github.com/sasha-s/go-deadlock"
 	"tailscale.com/tailcfg"
@@ -29,7 +30,7 @@ const nodeNameContextKey = contextKey("nodeName")
 type mapSession struct {
 	h      *Headscale
 	req    tailcfg.MapRequest
-	ctx    context.Context
+	ctx    context.Context //nolint:containedctx
 	capVer tailcfg.CapabilityVersion
 
 	cancelChMu deadlock.Mutex
@@ -44,10 +45,7 @@ type mapSession struct {
 	node *types.Node
 	w    http.ResponseWriter
 
-	warnf  func(string, ...any)
-	infof  func(string, ...any)
-	tracef func(string, ...any)
-	errf   func(error, string, ...any)
+	log zerolog.Logger
 }
 
 func (h *Headscale) newMapSession(
@@ -56,9 +54,7 @@ func (h *Headscale) newMapSession(
 	w http.ResponseWriter,
 	node *types.Node,
 ) *mapSession {
-	warnf, infof, tracef, errf := logPollFunc(req, node)
-
-	ka := keepAliveInterval + (time.Duration(rand.IntN(9000)) * time.Millisecond)
+	ka := keepAliveInterval + (time.Duration(rand.IntN(9000)) * time.Millisecond) //nolint:gosec // weak random is fine for jitter
 
 	return &mapSession{
 		h:      h,
@@ -75,11 +71,12 @@ func (h *Headscale) newMapSession(
 		keepAlive:       ka,
 		keepAliveTicker: nil,
 
-		// Loggers
-		warnf:  warnf,
-		infof:  infof,
-		tracef: tracef,
-		errf:   errf,
+		log: log.With().
+			Str(zf.Component, "poll").
+			EmbedObject(node).
+			Bool(zf.OmitPeers, req.OmitPeers).
+			Bool(zf.Stream, req.Stream).
+			Logger(),
 	}
 }
 
@@ -101,6 +98,8 @@ func (m *mapSession) beforeServeLongPoll() {
 	}
 }
 
+// afterServeLongPoll is called when a long-polling session ends and the node
+// is disconnected.
 func (m *mapSession) afterServeLongPoll() {
 	if m.node.IsEphemeral() {
 		m.h.ephemeralGC.Schedule(m.node.ID, m.h.cfg.EphemeralNodeInactivityTimeout)
@@ -112,6 +111,15 @@ func (m *mapSession) serve() {
 	// This is the mechanism where the node gives us information about its
 	// current configuration.
 	//
+	// Process the MapRequest to update node state (endpoints, hostinfo, etc.)
+	c, err := m.h.state.UpdateNodeFromMapRequest(m.node.ID, m.req)
+	if err != nil {
+		httpError(m.w, err)
+		return
+	}
+
+	m.h.Change(c)
+
 	// If OmitPeers is true and Stream is false
 	// then the server will let clients update their endpoints without
 	// breaking existing long-polling (Stream == true) connections.
@@ -122,14 +130,6 @@ func (m *mapSession) serve() {
 	// the response and just wants a 200.
 	// !req.stream && req.OmitPeers
 	if m.isEndpointUpdate() {
-		c, err := m.h.state.UpdateNodeFromMapRequest(m.node, m.req)
-		if err != nil {
-			httpError(m.w, err)
-			return
-		}
-
-		m.h.Change(c)
-
 		m.w.WriteHeader(http.StatusOK)
 		mapResponseEndpointUpdates.WithLabelValues("ok").Inc()
 	}
@@ -142,6 +142,8 @@ func (m *mapSession) serve() {
 func (m *mapSession) serveLongPoll() {
 	m.beforeServeLongPoll()
 
+	m.log.Trace().Caller().Msg("long poll session started")
+
 	// Clean up the session when the client disconnects
 	defer func() {
 		m.cancelChMu.Lock()
@@ -149,50 +151,88 @@ func (m *mapSession) serveLongPoll() {
 		close(m.cancelCh)
 		m.cancelChMu.Unlock()
 
-		// TODO(kradalby): This can likely be made more effective, but likely most
-		// nodes has access to the same routes, so it might not be a big deal.
-		disconnectChange, err := m.h.state.Disconnect(m.node)
-		if err != nil {
-			m.errf(err, "Failed to disconnect node %s", m.node.Hostname)
+		_ = m.h.mapBatcher.RemoveNode(m.node.ID, m.ch)
+
+		// When a node disconnects, it might rapidly reconnect (e.g. mobile clients, network weather).
+		// Instead of immediately marking the node as offline, we wait a few seconds to see if it reconnects.
+		// If it does reconnect, the existing mapSession will be replaced and the node remains online.
+		// If it doesn't reconnect within the timeout, we mark it as offline.
+		//
+		// This avoids flapping nodes in the UI and unnecessary churn in the network.
+		// This is not my favourite solution, but it kind of works in our eventually consistent world.
+		ticker := time.NewTicker(time.Second)
+		defer ticker.Stop()
+
+		disconnected := true
+		// Wait up to 10 seconds for the node to reconnect.
+		// 10 seconds was arbitrary chosen as a reasonable time to reconnect.
+		for range 10 {
+			if m.h.mapBatcher.IsConnected(m.node.ID) {
+				disconnected = false
+				break
+			}
+
+			<-ticker.C
 		}
-		m.h.Change(disconnectChange)
 
-		m.h.mapBatcher.RemoveNode(m.node.ID, m.ch, m.node.IsSubnetRouter())
+		if disconnected {
+			disconnectChanges, err := m.h.state.Disconnect(m.node.ID)
+			if err != nil {
+				m.log.Error().Caller().Err(err).Msg("failed to disconnect node")
+			}
 
-		m.afterServeLongPoll()
-		m.infof("node has disconnected, mapSession: %p, chan: %p", m, m.ch)
+			m.h.Change(disconnectChanges...)
+			m.afterServeLongPoll()
+			m.log.Info().Caller().Str(zf.Chan, fmt.Sprintf("%p", m.ch)).Msg("node has disconnected")
+		}
 	}()
 
 	// Set up the client stream
-	m.h.pollNetMapStreamWG.Add(1)
-	defer m.h.pollNetMapStreamWG.Done()
+	m.h.clientStreamsOpen.Add(1)
+	defer m.h.clientStreamsOpen.Done()
 
 	ctx, cancel := context.WithCancel(context.WithValue(m.ctx, nodeNameContextKey, m.node.Hostname))
 	defer cancel()
 
 	m.keepAliveTicker = time.NewTicker(m.keepAlive)
 
-	// Add node to batcher BEFORE sending Connect change to prevent race condition
-	// where the change is sent before the node is in the batcher's node map
-	if err := m.h.mapBatcher.AddNode(m.node.ID, m.ch, m.node.IsSubnetRouter(), m.capVer); err != nil {
-		m.errf(err, "failed to add node to batcher")
-		// Send empty response to client to fail fast for invalid/non-existent nodes
-		select {
-		case m.ch <- &tailcfg.MapResponse{}:
-		default:
-			// Channel might be closed
-		}
+	// Process the initial MapRequest to update node state (endpoints, hostinfo, etc.)
+	// This must be done BEFORE calling Connect() to ensure routes are properly synchronized.
+	// When nodes reconnect, they send their hostinfo with announced routes in the MapRequest.
+	// We need this data in NodeStore before Connect() sets up the primary routes, because
+	// SubnetRoutes() calculates the intersection of announced and approved routes. If we
+	// call Connect() first, SubnetRoutes() returns empty (no announced routes yet), causing
+	// the node to be incorrectly removed from AvailableRoutes.
+	mapReqChange, err := m.h.state.UpdateNodeFromMapRequest(m.node.ID, m.req)
+	if err != nil {
+		m.log.Error().Caller().Err(err).Msg("failed to update node from initial MapRequest")
 		return
 	}
 
-	// Now send the Connect change - the batcher handles NodeCameOnline internally
-	// but we still need to update routes and other state-level changes
-	connectChange := m.h.state.Connect(m.node)
-	if !connectChange.Empty() && connectChange.Change != change.NodeCameOnline {
-		m.h.Change(connectChange)
+	// Connect the node after its state has been updated.
+	// We send two separate change notifications because these are distinct operations:
+	// 1. UpdateNodeFromMapRequest: processes the client's reported state (routes, endpoints, hostinfo)
+	// 2. Connect: marks the node online and recalculates primary routes based on the updated state
+	// While this results in two notifications, it ensures route data is synchronized before
+	// primary route selection occurs, which is critical for proper HA subnet router failover.
+	connectChanges := m.h.state.Connect(m.node.ID)
+
+	m.log.Info().Caller().Str(zf.Chan, fmt.Sprintf("%p", m.ch)).Msg("node has connected")
+
+	// TODO(kradalby): Redo the comments here
+	// Add node to batcher so it can receive updates,
+	// adding this before connecting it to the state ensure that
+	// it does not miss any updates that might be sent in the split
+	// time between the node connecting and the batcher being ready.
+	if err := m.h.mapBatcher.AddNode(m.node.ID, m.ch, m.capVer); err != nil { //nolint:noinlineerr
+		m.log.Error().Caller().Err(err).Msg("failed to add node to batcher")
+		return
 	}
 
-	m.infof("node has connected, mapSession: %p, chan: %p", m, m.ch)
+	m.log.Debug().Caller().Msg("node added to batcher")
+
+	m.h.Change(mapReqChange)
+	m.h.Change(connectChanges...)
 
 	// Loop through updates and continuously send them to the
 	// client.
@@ -200,41 +240,48 @@ func (m *mapSession) serveLongPoll() {
 		// consume channels with update, keep alives or "batch" blocking signals
 		select {
 		case <-m.cancelCh:
-			m.tracef("poll cancelled received")
+			m.log.Trace().Caller().Msg("poll cancelled received")
 			mapResponseEnded.WithLabelValues("cancelled").Inc()
+
 			return
 
 		case <-ctx.Done():
-			m.tracef("poll context done")
+			m.log.Trace().Caller().Str(zf.Chan, fmt.Sprintf("%p", m.ch)).Msg("poll context done")
 			mapResponseEnded.WithLabelValues("done").Inc()
+
 			return
 
 		// Consume updates sent to node
 		case update, ok := <-m.ch:
-			m.tracef("received update from channel, ok: %t", ok)
+			m.log.Trace().Caller().Bool(zf.OK, ok).Msg("received update from channel")
+
 			if !ok {
-				m.tracef("update channel closed, streaming session is likely being replaced")
+				m.log.Trace().Caller().Msg("update channel closed, streaming session is likely being replaced")
 				return
 			}
 
-			if err := m.writeMap(update); err != nil {
-				m.errf(err, "cannot write update to client")
+			err := m.writeMap(update)
+			if err != nil {
+				m.log.Error().Caller().Err(err).Msg("cannot write update to client")
 				return
 			}
 
-			m.tracef("update sent")
+			m.log.Trace().Caller().Msg("update sent")
 			m.resetKeepAlive()
 
 		case <-m.keepAliveTicker.C:
-			if err := m.writeMap(&keepAlive); err != nil {
-				m.errf(err, "cannot write keep alive")
+			err := m.writeMap(&keepAlive)
+			if err != nil {
+				m.log.Error().Caller().Err(err).Msg("cannot write keep alive")
 				return
 			}
 
 			if debugHighCardinalityMetrics {
 				mapResponseLastSentSeconds.WithLabelValues("keepalive", m.node.ID.String()).Set(float64(time.Now().Unix()))
 			}
+
 			mapResponseSent.WithLabelValues("ok", "keepalive").Inc()
+			m.resetKeepAlive()
 		}
 	}
 }
@@ -253,7 +300,8 @@ func (m *mapSession) writeMap(msg *tailcfg.MapResponse) error {
 		jsonBody = zstdframe.AppendEncode(nil, jsonBody, zstdframe.FastestCompression)
 	}
 
-	data := make([]byte, reservedResponseHeaderSize)
+	data := make([]byte, reservedResponseHeaderSize, reservedResponseHeaderSize+len(jsonBody))
+	//nolint:gosec // G115: JSON response size will not exceed uint32 max
 	binary.LittleEndian.PutUint32(data, uint32(len(jsonBody)))
 	data = append(data, jsonBody...)
 
@@ -268,93 +316,21 @@ func (m *mapSession) writeMap(msg *tailcfg.MapResponse) error {
 		if f, ok := m.w.(http.Flusher); ok {
 			f.Flush()
 		} else {
-			m.errf(nil, "ResponseWriter does not implement http.Flusher, cannot flush")
+			m.log.Error().Caller().Msg("responseWriter does not implement http.Flusher, cannot flush")
 		}
 	}
 
-	log.Trace().Str("node", m.node.Hostname).TimeDiff("timeSpent", time.Now(), startWrite).Str("mkey", m.node.MachineKey.String()).Msg("finished writing mapresp to node")
+	m.log.Trace().
+		Caller().
+		Str(zf.Chan, fmt.Sprintf("%p", m.ch)).
+		TimeDiff("timeSpent", time.Now(), startWrite).
+		Str(zf.MachineKey, m.node.MachineKey.String()).
+		Bool("keepalive", msg.KeepAlive).
+		Msg("finished writing mapresp to node")
 
 	return nil
 }
 
 var keepAlive = tailcfg.MapResponse{
 	KeepAlive: true,
-}
-
-func logTracePeerChange(hostname string, hostinfoChange bool, peerChange *tailcfg.PeerChange) {
-	trace := log.Trace().Uint64("node.id", uint64(peerChange.NodeID)).Str("hostname", hostname)
-
-	if peerChange.Key != nil {
-		trace = trace.Str("node_key", peerChange.Key.ShortString())
-	}
-
-	if peerChange.DiscoKey != nil {
-		trace = trace.Str("disco_key", peerChange.DiscoKey.ShortString())
-	}
-
-	if peerChange.Online != nil {
-		trace = trace.Bool("online", *peerChange.Online)
-	}
-
-	if peerChange.Endpoints != nil {
-		eps := make([]string, len(peerChange.Endpoints))
-		for idx, ep := range peerChange.Endpoints {
-			eps[idx] = ep.String()
-		}
-
-		trace = trace.Strs("endpoints", eps)
-	}
-
-	if hostinfoChange {
-		trace = trace.Bool("hostinfo_changed", hostinfoChange)
-	}
-
-	if peerChange.DERPRegion != 0 {
-		trace = trace.Int("derp_region", peerChange.DERPRegion)
-	}
-
-	trace.Time("last_seen", *peerChange.LastSeen).Msg("PeerChange received")
-}
-
-func logPollFunc(
-	mapRequest tailcfg.MapRequest,
-	node *types.Node,
-) (func(string, ...any), func(string, ...any), func(string, ...any), func(error, string, ...any)) {
-	return func(msg string, a ...any) {
-			log.Warn().
-				Caller().
-				Bool("omitPeers", mapRequest.OmitPeers).
-				Bool("stream", mapRequest.Stream).
-				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.Hostname).
-				Msgf(msg, a...)
-		},
-		func(msg string, a ...any) {
-			log.Info().
-				Caller().
-				Bool("omitPeers", mapRequest.OmitPeers).
-				Bool("stream", mapRequest.Stream).
-				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.Hostname).
-				Msgf(msg, a...)
-		},
-		func(msg string, a ...any) {
-			log.Trace().
-				Caller().
-				Bool("omitPeers", mapRequest.OmitPeers).
-				Bool("stream", mapRequest.Stream).
-				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.Hostname).
-				Msgf(msg, a...)
-		},
-		func(err error, msg string, a ...any) {
-			log.Error().
-				Caller().
-				Bool("omitPeers", mapRequest.OmitPeers).
-				Bool("stream", mapRequest.Stream).
-				Uint64("node.id", node.ID.Uint64()).
-				Str("node", node.Hostname).
-				Err(err).
-				Msgf(msg, a...)
-		}
 }

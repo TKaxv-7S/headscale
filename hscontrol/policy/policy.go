@@ -7,9 +7,8 @@ import (
 	"github.com/juanfont/headscale/hscontrol/policy/matcher"
 	"github.com/juanfont/headscale/hscontrol/types"
 	"github.com/juanfont/headscale/hscontrol/util"
+	"github.com/rs/zerolog/log"
 	"github.com/samber/lo"
-	"tailscale.com/net/tsaddr"
-	"tailscale.com/tailcfg"
 	"tailscale.com/types/views"
 )
 
@@ -78,99 +77,74 @@ func BuildPeerMap(
 	return ret
 }
 
-// ReduceFilterRules takes a node and a set of rules and removes all rules and destinations
-// that are not relevant to that particular node.
-func ReduceFilterRules(node types.NodeView, rules []tailcfg.FilterRule) []tailcfg.FilterRule {
-	ret := []tailcfg.FilterRule{}
-
-	for _, rule := range rules {
-		// record if the rule is actually relevant for the given node.
-		var dests []tailcfg.NetPortRange
-	DEST_LOOP:
-		for _, dest := range rule.DstPorts {
-			expanded, err := util.ParseIPSet(dest.IP, nil)
-			// Fail closed, if we can't parse it, then we should not allow
-			// access.
-			if err != nil {
-				continue DEST_LOOP
-			}
-
-			if node.InIPSet(expanded) {
-				dests = append(dests, dest)
-				continue DEST_LOOP
-			}
-
-			// If the node exposes routes, ensure they are note removed
-			// when the filters are reduced.
-			if node.Hostinfo().Valid() {
-				routableIPs := node.Hostinfo().RoutableIPs()
-				if routableIPs.Len() > 0 {
-					for _, routableIP := range routableIPs.All() {
-						if expanded.OverlapsPrefix(routableIP) {
-							dests = append(dests, dest)
-							continue DEST_LOOP
-						}
-					}
-				}
-			}
-
-			// Also check approved subnet routes - nodes should have access
-			// to subnets they're approved to route traffic for.
-			subnetRoutes := node.SubnetRoutes()
-
-			for _, subnetRoute := range subnetRoutes {
-				if expanded.OverlapsPrefix(subnetRoute) {
-					dests = append(dests, dest)
-					continue DEST_LOOP
-				}
-			}
-		}
-
-		if len(dests) > 0 {
-			ret = append(ret, tailcfg.FilterRule{
-				SrcIPs:   rule.SrcIPs,
-				DstPorts: dests,
-				IPProto:  rule.IPProto,
-			})
-		}
-	}
-
-	return ret
-}
-
-// AutoApproveRoutes approves any route that can be autoapproved from
-// the nodes perspective according to the given policy.
-// It reports true if any routes were approved.
-// Note: This function now takes a pointer to the actual node to modify ApprovedRoutes.
-func AutoApproveRoutes(pm PolicyManager, node *types.Node) bool {
+// ApproveRoutesWithPolicy checks if the node can approve the announced routes
+// and returns the new list of approved routes.
+// The approved routes will include:
+// 1. ALL previously approved routes (regardless of whether they're still advertised)
+// 2. New routes from announcedRoutes that can be auto-approved by policy
+// This ensures that:
+// - Previously approved routes are ALWAYS preserved (auto-approval never removes routes)
+// - New routes can be auto-approved according to policy
+// - Routes can only be removed by explicit admin action (not by auto-approval).
+func ApproveRoutesWithPolicy(pm PolicyManager, nv types.NodeView, currentApproved, announcedRoutes []netip.Prefix) ([]netip.Prefix, bool) {
 	if pm == nil {
-		return false
+		return currentApproved, false
 	}
-	nodeView := node.View()
-	var newApproved []netip.Prefix
-	for _, route := range nodeView.AnnouncedRoutes() {
-		if pm.NodeCanApproveRoute(nodeView, route) {
+
+	// Start with ALL currently approved routes - we never remove approved routes
+	newApproved := make([]netip.Prefix, len(currentApproved))
+	copy(newApproved, currentApproved)
+
+	// Then, check for new routes that can be auto-approved
+	for _, route := range announcedRoutes {
+		// Skip if already approved
+		if slices.Contains(newApproved, route) {
+			continue
+		}
+
+		// Check if this new route can be auto-approved by policy
+		canApprove := pm.NodeCanApproveRoute(nv, route)
+		if canApprove {
 			newApproved = append(newApproved, route)
 		}
 	}
 
-	// Only modify ApprovedRoutes if we have new routes to approve.
-	// This prevents clearing existing approved routes when nodes
-	// temporarily don't have announced routes during policy changes.
-	if len(newApproved) > 0 {
-		combined := append(newApproved, node.ApprovedRoutes...)
-		tsaddr.SortPrefixes(combined)
-		combined = slices.Compact(combined)
-		combined = lo.Filter(combined, func(route netip.Prefix, index int) bool {
-			return route.IsValid()
-		})
+	// Sort and deduplicate
+	slices.SortFunc(newApproved, netip.Prefix.Compare)
+	newApproved = slices.Compact(newApproved)
+	newApproved = lo.Filter(newApproved, func(route netip.Prefix, index int) bool {
+		return route.IsValid()
+	})
 
-		// Only update if the routes actually changed
-		if !slices.Equal(node.ApprovedRoutes, combined) {
-			node.ApprovedRoutes = combined
-			return true
+	// Sort the current approved for comparison
+	sortedCurrent := make([]netip.Prefix, len(currentApproved))
+	copy(sortedCurrent, currentApproved)
+	slices.SortFunc(sortedCurrent, netip.Prefix.Compare)
+
+	// Only update if the routes actually changed
+	if !slices.Equal(sortedCurrent, newApproved) {
+		// Log what changed
+		var added, kept []netip.Prefix
+
+		for _, route := range newApproved {
+			if !slices.Contains(sortedCurrent, route) {
+				added = append(added, route)
+			} else {
+				kept = append(kept, route)
+			}
 		}
+
+		if len(added) > 0 {
+			log.Debug().
+				EmbedObject(nv).
+				Strs("routes.added", util.PrefixesToString(added)).
+				Strs("routes.kept", util.PrefixesToString(kept)).
+				Int("routes.total", len(newApproved)).
+				Msg("Routes auto-approved by policy")
+		}
+
+		return newApproved, true
 	}
 
-	return false
+	return newApproved, false
 }
