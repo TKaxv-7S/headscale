@@ -30,7 +30,7 @@ const (
 	testFile                    = "../../hscontrol/capver/capver_test_data.go"
 	fallbackCapVer              = 90
 	maxTestCases                = 4
-	supportedMajorMinorVersions = 10
+	supportedMajorMinorVersions = 9999
 	filePermissions             = 0o600
 	semverMatchGroups           = 4
 	latest3Count                = 3
