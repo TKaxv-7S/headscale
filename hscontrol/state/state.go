@@ -802,67 +802,121 @@ func (s *State) RenameNode(nodeID types.NodeID, newName string) (types.NodeView,
 func (s *State) ChangeIPv4AddressesNode(nodeID types.NodeID, newAddresses string) (types.NodeView, change.Change, error) {
 	newIpAddresses, err := netip.ParseAddr(newAddresses)
 	if err != nil {
-		return types.NodeView{}, change.Change{}, err
+		return types.NodeView{}, change.Change{}, fmt.Errorf("parsing ipv4 address: %w", err)
 	}
 	if newIpAddresses.Is6() {
 		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv4 addresses is ipv6")
 	}
 
 	alloc := s.ipAlloc
-	isAvailable, err := alloc.IsAvailableIP(
-		newIpAddresses,
-	)
-	if err != nil || isAvailable == false {
-		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv4 addresses node: %w", err)
+	isAvailable, err := alloc.IsAvailableIP(newIpAddresses)
+	if err != nil {
+		return types.NodeView{}, change.Change{}, fmt.Errorf("checking ipv4 availability: %w", err)
 	}
-	n, ok := s.nodeStore.UpdateNode(nodeID, func(node *types.Node) {
-		if newIpAddresses.Is4() {
-			iPv4 := node.IPv4
-			alloc.RemoveIP(*iPv4)
-		} else {
-			iPv6 := node.IPv6
-			alloc.RemoveIP(*iPv6)
-		}
-		alloc.AddIP(newIpAddresses)
-	})
-	if !ok {
-		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv4 addresses node: %w", err)
+	if !isAvailable {
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv4 addresses node: IP is not available")
 	}
 
-	return s.persistNodeToDB(n)
+	alloc.AddIP(newIpAddresses)
+
+	var oldIPv4 netip.Addr
+	var hasOldIPv4 bool
+	n, ok := s.nodeStore.UpdateNode(nodeID, func(node *types.Node) {
+		if node.IPv4 != nil {
+			oldIPv4 = *node.IPv4
+			hasOldIPv4 = true
+		}
+		node.IPv4 = &newIpAddresses
+	})
+	if !ok {
+		// 节点未找到，回滚 IP 分配
+		alloc.RemoveIP(newIpAddresses)
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv4 addresses node: node not found")
+	}
+
+	nodeView, c, err := s.persistNodeToDB(n)
+	if err != nil {
+		// 持久化失败，回滚 NodeStore 和 IP 分配
+		s.nodeStore.UpdateNode(nodeID, func(node *types.Node) {
+			if hasOldIPv4 {
+				node.IPv4 = &oldIPv4
+			} else {
+				node.IPv4 = nil
+			}
+		})
+		alloc.RemoveIP(newIpAddresses)
+		if hasOldIPv4 {
+			alloc.AddIP(oldIPv4)
+		}
+		return nodeView, c, fmt.Errorf("persisting ipv4 change: %w", err)
+	}
+
+	// 成功持久化后才释放旧 IP
+	if hasOldIPv4 {
+		alloc.RemoveIP(oldIPv4)
+	}
+
+	return nodeView, c, nil
 }
 
 func (s *State) ChangeIPv6AddressesNode(nodeID types.NodeID, newAddresses string) (types.NodeView, change.Change, error) {
 	newIpAddresses, err := netip.ParseAddr(newAddresses)
 	if err != nil {
-		return types.NodeView{}, change.Change{}, err
+		return types.NodeView{}, change.Change{}, fmt.Errorf("parsing ipv6 address: %w", err)
 	}
 	if newIpAddresses.Is4() {
 		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv6 addresses is ipv4")
 	}
 
 	alloc := s.ipAlloc
-	isAvailable, err := alloc.IsAvailableIP(
-		newIpAddresses,
-	)
-	if err != nil || isAvailable == false {
-		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv6 addresses node: %w", err)
+	isAvailable, err := alloc.IsAvailableIP(newIpAddresses)
+	if err != nil {
+		return types.NodeView{}, change.Change{}, fmt.Errorf("checking ipv6 availability: %w", err)
 	}
-	n, ok := s.nodeStore.UpdateNode(nodeID, func(node *types.Node) {
-		if newIpAddresses.Is4() {
-			iPv4 := node.IPv4
-			alloc.RemoveIP(*iPv4)
-		} else {
-			iPv6 := node.IPv6
-			alloc.RemoveIP(*iPv6)
-		}
-		alloc.AddIP(newIpAddresses)
-	})
-	if !ok {
-		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv6 addresses node: %w", err)
+	if !isAvailable {
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv6 addresses node: IP is not available")
 	}
 
-	return s.persistNodeToDB(n)
+	alloc.AddIP(newIpAddresses)
+
+	var oldIPv6 netip.Addr
+	var hasOldIPv6 bool
+	n, ok := s.nodeStore.UpdateNode(nodeID, func(node *types.Node) {
+		if node.IPv6 != nil {
+			oldIPv6 = *node.IPv6
+			hasOldIPv6 = true
+		}
+		node.IPv6 = &newIpAddresses
+	})
+	if !ok {
+		// 节点未找到，回滚 IP 分配
+		alloc.RemoveIP(newIpAddresses)
+		return types.NodeView{}, change.Change{}, fmt.Errorf("change ipv6 addresses node: node not found")
+	}
+
+	nodeView, c, err := s.persistNodeToDB(n)
+	if err != nil {
+		// 持久化失败，回滚 NodeStore 和 IP 分配
+		s.nodeStore.UpdateNode(nodeID, func(node *types.Node) {
+			if hasOldIPv6 {
+				node.IPv6 = &oldIPv6
+			} else {
+				node.IPv6 = nil
+			}
+		})
+		alloc.RemoveIP(newIpAddresses)
+		if hasOldIPv6 {
+			alloc.AddIP(oldIPv6)
+		}
+		return nodeView, c, fmt.Errorf("persisting ipv6 change: %w", err)
+	}
+
+	// 成功持久化后才释放旧 IP
+	if hasOldIPv6 {
+		alloc.RemoveIP(oldIPv6)
+	}
+
+	return nodeView, c, nil
 }
 
 // BackfillNodeIPs assigns IP addresses to nodes that don't have them.
@@ -1450,6 +1504,8 @@ func (s *State) createAndSaveNewNode(params newNodeParams) (types.NodeView, erro
 	if nodeToRegister.GivenName == "" {
 		givenName, err := hsdb.EnsureUniqueGivenName(s.db.DB, nodeToRegister.Hostname)
 		if err != nil {
+			// 名称唯一性检查失败，释放已分配的 IP 防止泄露
+			s.ipAlloc.FreeIPs(nodeToRegister.IPs())
 			return types.NodeView{}, fmt.Errorf("ensuring unique given name: %w", err)
 		}
 
@@ -1473,6 +1529,8 @@ func (s *State) createAndSaveNewNode(params newNodeParams) (types.NodeView, erro
 		return &nodeToRegister, nil
 	})
 	if err != nil {
+		// 数据库写入失败，释放已分配的 IP 防止泄露
+		s.ipAlloc.FreeIPs(nodeToRegister.IPs())
 		return types.NodeView{}, err
 	}
 
