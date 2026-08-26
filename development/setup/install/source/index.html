@@ -12,7 +12,7 @@
 </span><span id=__span-0-12><a id=__codelineno-0-12 name=__codelineno-0-12 href=#__codelineno-0-12></a>
 </span><span id=__span-0-13><a id=__codelineno-0-13 name=__codelineno-0-13 href=#__codelineno-0-13></a>git<span class=w> </span>checkout<span class=w> </span><span class=nv>$latestTag</span>
 </span><span id=__span-0-14><a id=__codelineno-0-14 name=__codelineno-0-14 href=#__codelineno-0-14></a>
-</span><span id=__span-0-15><a id=__codelineno-0-15 name=__codelineno-0-15 href=#__codelineno-0-15></a>go<span class=w> </span>build<span class=w> </span>-ldflags<span class=o>=</span><span class=s2>&quot;-s -w -X github.com/juanfont/headscale/hscontrol/types.Version=</span><span class=nv>$latestTag</span><span class=s2>&quot;</span><span class=w> </span>-X<span class=w> </span>github.com/juanfont/headscale/hscontrol/types.GitCommitHash<span class=o>=</span>HASH<span class=s2>&quot; github.com/juanfont/headscale</span>
+</span><span id=__span-0-15><a id=__codelineno-0-15 name=__codelineno-0-15 href=#__codelineno-0-15></a>go<span class=w> </span>build<span class=w> </span>-ldflags<span class=o>=</span><span class=s2>"-s -w -X github.com/juanfont/headscale/hscontrol/types.Version=</span><span class=nv>$latestTag</span><span class=s2>"</span><span class=w> </span>-X<span class=w> </span>github.com/juanfont/headscale/hscontrol/types.GitCommitHash<span class=o>=</span>HASH<span class=s2>" github.com/juanfont/headscale</span>
 </span><span id=__span-0-16><a id=__codelineno-0-16 name=__codelineno-0-16 href=#__codelineno-0-16></a>
 </span><span id=__span-0-17><a id=__codelineno-0-17 name=__codelineno-0-17 href=#__codelineno-0-17></a><span class=s2># make it executable</span>
 </span><span id=__span-0-18><a id=__codelineno-0-18 name=__codelineno-0-18 href=#__codelineno-0-18></a><span class=s2>chmod a+x headscale</span>
@@ -20,7 +20,7 @@
 </span><span id=__span-0-20><a id=__codelineno-0-20 name=__codelineno-0-20 href=#__codelineno-0-20></a><span class=s2># copy it to /usr/local/sbin</span>
 </span><span id=__span-0-21><a id=__codelineno-0-21 name=__codelineno-0-21 href=#__codelineno-0-21></a><span class=s2>cp headscale /usr/local/sbin</span>
 </span></code></pre></div> <h3 id=install-from-source-via-cross-compile>Install from source via cross compile<a class=headerlink href=#install-from-source-via-cross-compile title="Permanent link">&para;</a></h3> <div class="language-shell highlight"><pre><span></span><code><span id=__span-1-1><a id=__codelineno-1-1 name=__codelineno-1-1 href=#__codelineno-1-1></a><span class=c1># Install prerequisites</span>
-</span><span id=__span-1-2><a id=__codelineno-1-2 name=__codelineno-1-2 href=#__codelineno-1-2></a><span class=c1># 1. go v1.20+: headscale newer than 0.21 needs go 1.20+ to compile</span>
+</span><span id=__span-1-2><a id=__codelineno-1-2 name=__codelineno-1-2 href=#__codelineno-1-2></a><span class=c1># 1. go v1.27+: see the go directive in go.mod for the exact minimum</span>
 </span><span id=__span-1-3><a id=__codelineno-1-3 name=__codelineno-1-3 href=#__codelineno-1-3></a><span class=c1># 2. gmake: Makefile in the headscale repo is written in GNU make syntax</span>
 </span><span id=__span-1-4><a id=__codelineno-1-4 name=__codelineno-1-4 href=#__codelineno-1-4></a>
 </span><span id=__span-1-5><a id=__codelineno-1-5 name=__codelineno-1-5 href=#__codelineno-1-5></a>git<span class=w> </span>clone<span class=w> </span>https://github.com/juanfont/headscale.git
